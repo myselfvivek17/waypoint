@@ -194,3 +194,14 @@ def test_loose_search_hits_are_filtered_by_title():
     rows = [mk("Avenue des Champs-Elysées, Paris"), mk("Cricket stadium at night"), mk("Fairy light garland")]
     assert [p.title for p in places.relevant(rows, "fairy lights")] == ["Fairy light garland"]
     assert [p.title for p in places.relevant(rows, "cricket stadium")] == ["Cricket stadium at night"]
+
+
+def test_venue_reason_states_the_real_kind_and_no_stale_amounts(aditya, venue_set):
+    draft = DraftPlan(stops=[DraftStop(key="venue", pick=DraftOption(
+        name="Olive Kitchen", place_id="node/1", price=12000,
+        reason="A cosy café with a rooftop. Fits your ₹40,000 budget. Great for cricket fans.",
+        why="Within ₹12,000 for the venue."))])
+    rec = _assemble(draft, aditya, venue_set).stops[0].rec
+    assert rec.reason.startswith("Restaurant, ") and " km from Gachibowli." in rec.reason
+    assert "café" not in rec.reason and "₹" not in rec.reason and "Great for cricket fans." in rec.reason
+    assert "₹" not in rec.why

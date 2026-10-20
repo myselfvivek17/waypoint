@@ -5,7 +5,7 @@ import { dayView, planView } from './dayplan.js';
 import { $, clear, h } from './dom.js';
 import { chatView, startDemo, welcomeView } from './intake.js';
 import { journeyView, sheetView } from './journey.js';
-import { load, resetAll, state } from './store.js';
+import { discardDetailEdits, load, resetAll, state } from './store.js';
 import { cancelTimers, go, onRender, ROUTES, stopThinking } from './ui.js';
 
 const NAV = [['chat', 'Details'], ['journey', 'Journey'], ['day', 'Event day'], ['plan', 'My plan']];
@@ -52,6 +52,12 @@ function bannerView() {
     el.append(h('div', { class: 'offb', role: 'status' },
       "You're offline. Everything you've decided is saved on this device; new AI suggestions wait until you're back."));
     return;
+  }
+  if (state.plan && state.planDirty && ['journey', 'day', 'plan'].includes(state.route)) {
+    el.append(h('div', { class: 'offb warn dirty', role: 'status' },
+      h('span', null, 'You changed your details, but this plan still uses the old ones. '),
+      h('button', { class: 'linkb', type: 'button', onClick: () => go('chat', { focus: 'question' }) }, 'Re-plan with the new details'),
+      h('button', { class: 'linkb', type: 'button', onClick: () => { discardDetailEdits(); render({ focus: null }); } }, 'Undo the edits')));
   }
   const src = state.plan && ['journey', 'day', 'plan'].includes(state.route) ? state.plan.source : null;
   if (src === 'fallback') {

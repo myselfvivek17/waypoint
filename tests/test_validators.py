@@ -6,6 +6,7 @@ import random
 import pytest
 
 from app import validators as v
+from app.validators import drop_money, drop_wrong_kind
 from app.schemas import Option, Stop
 
 T = dt.date(2026, 10, 20)
@@ -92,3 +93,24 @@ def test_caps_and_required():
     assert v.cap_list(range(10), 3) == [0, 1, 2]
     assert v.cap_list(None, 3) == []
     assert v.require({"a": 1, "b": "", "c": None}, ["a", "b", "c", "d"]) == ["b", "c", "d"]
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("Fits your ₹40,000 budget. Lovely terrace.", "Lovely terrace."),
+    ("About Rs 500 a head. Good food.", "Good food."),
+    ("Keeps it under 40k. Warm lights!", "Warm lights!"),
+    ("Costs 2 lakh rupees.", ""),
+    ("Seats 30 guests near the lake.", "Seats 30 guests near the lake."),
+])
+def test_drop_money_removes_sentences_with_amounts(text, expected):
+    assert drop_money(text) == expected
+
+
+@pytest.mark.parametrize("text,label,expected", [
+    ("A cosy café with fairy lights. Great for groups.", "Restaurant", "Great for groups."),
+    ("A cosy café with fairy lights.", "Café", "A cosy café with fairy lights."),
+    ("The banquet hall has a stage.", "Banquet hall", "The banquet hall has a stage."),
+    ("Open lawn and garden seating.", "Hotel", ""),
+])
+def test_drop_wrong_kind(text, label, expected):
+    assert drop_wrong_kind(text, label) == expected

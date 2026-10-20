@@ -33,6 +33,33 @@ def clip(value: object, limit: int, default: str = "") -> str:
     return text or default
 
 
+_SENTENCE = re.compile(r"[^.!?]+[.!?]*")
+_MONEY = re.compile(r"₹|\brs\.?\s*\d|\binr\b|\d\s*(?:k|lakhs?|lacs?|crores?)\b|\brupees?\b", re.I)
+KIND_WORDS = re.compile(r"(?i)\b(caf[eé]|restaurant|banquet|hall|garden|park|hotel|resort|lawn|terrace|clubhouse|"
+                        r"dhaba|rooftop)s?\b")
+
+
+def sentences(text: str) -> list[str]:
+    return [s.strip() for s in _SENTENCE.findall(text or "") if s.strip()]
+
+
+def drop_money(text: str) -> str:
+    """Remove sentences that quote amounts. Prices are shown from the numbers, which code keeps
+    right; an amount inside prose goes stale as soon as the budget or a choice changes."""
+    return " ".join(s for s in sentences(text) if not _MONEY.search(s))
+
+
+def drop_wrong_kind(text: str, label: str) -> str:
+    """Remove sentences that call a real place something it is not (a "café" that is a restaurant)."""
+    own = label.lower().replace("é", "e")
+    out = []
+    for s in sentences(text):
+        words = {w.lower().replace("é", "e") for w in KIND_WORDS.findall(s)}
+        if all(w in own for w in words):
+            out.append(s)
+    return " ".join(out)
+
+
 def cap_list(items: Iterable[T] | None, limit: int) -> list[T]:
     """First ``limit`` items of an iterable, tolerating ``None``."""
     return list(items or [])[:limit]

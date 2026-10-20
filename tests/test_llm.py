@@ -198,3 +198,32 @@ def test_only_providers_honouring_json_mode_are_used(live_llm):
         run(llm.ask("t", "x", {"m": "a"}, Answer, fallback))
     body = json.loads(route.calls[0].request.content)
     assert body["provider"] == {"require_parameters": True} and body["response_format"] == {"type": "json_object"}
+
+
+def test_empty_reply_retries_with_the_next_model_in_the_chain(live_llm, monkeypatch):
+    monkeypatch.setenv("WP_LLM_MODEL", "a/b:free,c/d:free,openrouter/free")
+    empty = httpx.Response(200, json={"model": "a/b:free", "choices": [{"message": {"content": ""}}]})
+    with respx.mock as mock:
+        route = mock.post(llm.API_URL).mock(side_effect=[empty, ok('{"reply": "second"}', model="c/d:free")])
+        res = run(llm.ask("adjust", "x", {"m": "a"}, Answer, fallback))
+    assert res.source == "ai" and res.value.reply == "second"
+    firsts = [json.loads(c.request.content)["model"] for c in route.calls]
+    assert firsts == ["a/b:free", "c/d:free"]
+
+
+def test_every_model_failing_falls_back(live_llm, monkeypatch):
+    monkeypatch.setenv("WP_LLM_MODEL", "a/b:free,c/d:free")
+    empty = httpx.Response(200, json={"choices": [{"message": {"content": None}}]})
+    with respx.mock as mock:
+        route = mock.post(llm.API_URL).mock(return_value=empty)
+        res = run(llm.ask("adjust", "x", {"m": "a"}, Answer, fallback))
+    assert res.source == "fallback" and route.call_count == 2
+
+
+@pytest.mark.parametrize("models,chains", [
+    (("a",), [("a",), ("a",)]),
+    (("a", "b"), [("a", "b"), ("b",)]),
+    (("a", "b", "c", "d"), [("a", "b", "c", "d"), ("b", "c", "d"), ("c", "d")]),
+])
+def test_attempt_chains(models, chains):
+    assert llm.attempt_chains(models) == chains

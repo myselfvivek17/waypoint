@@ -20,9 +20,9 @@
 }
 :root[data-theme="dark"]{
  color-scheme:dark;
- --ink:#F3EAD8;--cream:#11181F;--paper:#18222C;--sand:#223140;--line:#3A4B5A;--muted:#BDB4A3;
+ --ink:#F3EAD8;--cream:#11181F;--paper:#18222C;--sand:#223140;--line:#4A5C6C;--muted:#D2C9B8;
  --saff:#F2A65E;--mari:#E8A317;--on-mari:#16202A;--focus:#F3EAD8;--danger:#FF9C7A;--good:#93D3A2;
- --placeholder:#A69D8D;--dash:#8C8270;--pri-hover:#FFFFFF;--field:#0E141A;
+ --placeholder:#C4BBAA;--dash:#9A8F7C;--pri-hover:#FFFFFF;--field:#0E141A;
  --stripe1:#4A5A66;--stripe2:#33434F;--knob:#6F7D88;--scrim:rgba(0,0,0,.6);
  --np1:#1B2631;--np2:#16202A;--ph:#22303C;--bplan:#55636E;
  --night:#0A1016;--night-2:#142028;--night-3:#1B2B37;--on-night:#F3EAD8;--night-dim:#CFC8B8;--night-step:#F0C262;
@@ -97,6 +97,7 @@ h1:focus-visible,h2:focus-visible{outline:3px solid var(--focus);outline-offset:
 /* ---------- banners ---------- */
 .offb{background:var(--night);color:var(--on-night);text-align:center;padding:10px 20px;font-weight:600}
 .offb.warn{background:var(--mari);color:var(--on-mari)}
+.offb .linkb{color:inherit;margin:0 6px}
 
 /* ---------- welcome ---------- */
 .welcome{position:relative;min-height:calc(100vh - 60px);display:flex;align-items:center;padding:48px 0 72px}
@@ -275,6 +276,7 @@ h1:focus-visible,h2:focus-visible{outline:3px solid var(--focus);outline-offset:
 .scrim{position:absolute;inset:0;border:0;background:var(--scrim);animation:fadein .3s ease both;cursor:default;width:100%}
 .sheet{position:absolute;left:0;right:0;bottom:0;max-height:88vh;overflow:auto;background:var(--cream);border-radius:28px 28px 0 0;padding:24px 20px 32px;animation:sheetup .4s cubic-bezier(.2,.8,.2,1) both;--focus:var(--ink)}
 .sheethd{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:14px}
+.sheetcur{display:flex;gap:10px 16px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:12px 14px;margin:0 0 14px;border-radius:16px;border:2px solid var(--mari);background:var(--paper)}
 .alts{list-style:none;padding:0;margin:0;display:grid;gap:14px}
 .alt{display:grid;grid-template-columns:120px minmax(0,1fr);gap:16px;padding:14px;border-radius:18px;background:var(--paper);border:1.5px solid var(--line)}
 .alt svg{width:100%;aspect-ratio:4/3;border-radius:12px;display:block}
@@ -339,6 +341,10 @@ h1:focus-visible,h2:focus-visible{outline:3px solid var(--focus);outline-offset:
 }
 @media (min-width:900px){
  .sheet{left:auto;top:0;bottom:0;width:500px;max-height:none;border-radius:28px 0 0 28px;animation-name:sheetside}
+ /* the side sheet must not cover the stop it is about: the page makes room on the left */
+ body:has(.sheetwrap) #view{padding-right:500px}
+ body:has(.sheetwrap) .prop{grid-template-columns:minmax(0,1fr);gap:20px}
+ body:has(.sheetwrap) .prop>div:last-child{order:-1}
 }
 @media (max-width:520px){
  .alt{grid-template-columns:minmax(0,1fr)}

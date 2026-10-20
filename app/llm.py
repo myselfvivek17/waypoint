@@ -5,7 +5,8 @@
 * $0 is enforced: any model id that is not ``openrouter/free`` or ``…:free`` is refused, and a
   reply that reports a non-zero cost is discarded.
 * Replies must be one JSON object, validated against a pydantic schema.
-* Timeout, one retry, then the caller's deterministic fallback.
+* Timeout and retries: a failed attempt (error, empty reply, bad JSON) is retried starting from the
+  next model in the chain, then the caller's deterministic fallback is used.
 * In-memory LRU cache keyed by a hash of the request.
 * Mock mode (no key, or ``WP_LLM_MOCK=1``) returns the deterministic fallback directly.
 * User text is only ever sent inside a delimited data block, never in the instructions.
@@ -158,6 +159,17 @@ def extract_json(text: str) -> dict:
     return found
 
 
+def attempt_chains(models: tuple[str, ...]) -> list[tuple[str, ...]]:
+    """The model chain for each attempt: attempt k starts at the k-th model.
+
+    OpenRouter's own fallback only covers HTTP errors, not an empty or malformed reply, so a
+    retry has to move on to the next model itself. A single model is simply tried twice.
+    """
+    if len(models) == 1:
+        return [models, models]
+    return [models[k:] for k in range(min(len(models), 3))]
+
+
 async def _call(cfg: Settings, messages: list[dict], max_tokens: int) -> str:
     payload = {
         "model": cfg.model,
@@ -201,8 +213,8 @@ async def ask(task: str, instructions: str, data: dict, schema: type[M],
               fallback: Callable[[], M], max_tokens: int = 1200, timeout: float | None = None) -> Result[M]:
     """Ask the model for one JSON object matching ``schema``.
 
-    Never raises for model problems: on refusal, timeout, bad JSON or a schema
-    mismatch (after one retry) the deterministic ``fallback`` is returned instead.
+    Never raises for model problems: on refusal, timeout, an empty reply, bad JSON or a schema
+    mismatch (after retrying down the model chain) the deterministic ``fallback`` is returned.
     ``timeout`` caps each attempt below the configured default (short for chat turns).
     """
     cfg = settings()
@@ -221,11 +233,11 @@ async def ask(task: str, instructions: str, data: dict, schema: type[M],
         stats["cache_hits"] += 1
         return Result(schema.model_validate(hit), "ai")
 
-    for attempt in (1, 2):
+    for attempt, chain in enumerate(attempt_chains(cfg.models), start=1):
         try:
             async with _slots:
                 stats["calls"] += 1
-                raw = await _call(cfg, messages, max_tokens)
+                raw = await _call(replace(cfg, models=chain), messages, max_tokens)
             obj = extract_json(raw)
             value = schema.model_validate(obj)
             cache.put(key, value.model_dump(mode="json"))
@@ -234,6 +246,6 @@ async def ask(task: str, instructions: str, data: dict, schema: type[M],
             # RuntimeErrors carry only our own wording; for the rest log the class alone,
             # because parser messages may quote the reply, which may echo user text.
             why = str(exc) if type(exc) is RuntimeError else type(exc).__name__
-            log.warning("%s: model attempt %d failed (%s)", task, attempt, why)
+            log.warning("%s: model attempt %d (%s) failed (%s)", task, attempt, chain[0], why)
     stats["failures"] += 1
     return Result(fallback(), "fallback")

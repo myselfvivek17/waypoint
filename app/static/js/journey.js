@@ -4,8 +4,8 @@ import { api } from './api.js';
 import { landscape, mapBase, noPhotoIcon, toneArt } from './art.js';
 import { h, inr, s, safeUrl } from './dom.js';
 import { chipDefs } from './intake.js';
-import { allOptions, budgetModel, lineTotal, maxReach, nextIndex, stopsModel } from './model.js';
-import { state } from './store.js';
+import { allOptions, budgetLine, lineTotal, maxReach, nextIndex, stopsModel, summary } from './model.js';
+import { chooseOption, confirmStop, state } from './store.js';
 import { announce, go, later, rerender, say, stopThinking, think, update } from './ui.js';
 
 const PHOTO_HOSTS = ['upload.wikimedia.org'];
@@ -74,38 +74,20 @@ function openStop(i) {
   if (x) announce(`Stop ${i + 1}, ${x.label}: ${x.item.name}, ${inr(x.price)}.`);
 }
 
-function decide(key) {
-  const updated = Object.assign({}, state.j.updated);
-  delete updated[key];
-  return {
-    decided: Object.assign({}, state.j.decided, { [key]: true }), updated,
-    ripples: state.j.ripples.map((r) => (r.stop === key ? Object.assign({}, r, { ack: true }) : r)),
-  };
-}
-
 function lookGood(m) {
   const cur = m[current(m)];
   if (!cur) return;
-  const d = decide(cur.key);
-  const next = nextIndex(m, d.decided, cur.i);
-  update({ j: Object.assign({}, state.j, d, { stopIdx: next, pin: null }), slide: 0, why: false, change: false },
-    { focus: next >= m.length ? 'finale' : 'stop' });
+  const next = nextIndex(m, Object.assign({}, state.j.decided, { [cur.key]: true }), cur.i);
+  confirmStop(cur.key, { stopIdx: next, pin: null });
+  update({ slide: 0, why: false, change: false, sheet: false }, { focus: next >= m.length ? 'finale' : 'stop' });
   const after = stopsModel(state);
   announce(next >= after.length ? 'Every stop is decided.'
     : `${cur.label} confirmed. Stop ${next + 1}, ${after[next].label}: ${after[next].item.name}, ${inr(after[next].price)}.`);
 }
 
 function pick(stop, o) {
-  const j = state.j;
-  const rip = (o.ripple || []).map((r) => ({ src: stop.key, stop: r.stop, note: r.note, extra: r.extra || 0, ack: false }));
-  update({
-    j: Object.assign({}, j, {
-      chosen: Object.assign({}, j.chosen, { [stop.key]: o.id }),
-      ripples: j.ripples.filter((r) => r.src !== stop.key).concat(rip),
-      decided: Object.assign({}, j.decided, { [stop.key]: false }),
-    }),
-    sheet: false, slide: 0, why: false, change: false, changeMsg: '',
-  }, { focus: 'stop' });
+  const rip = chooseOption(stop, o);
+  update({ sheet: false, slide: 0, why: false, change: false, changeMsg: '' }, { focus: 'stop' });
   const affected = rip.map((r) => (state.plan.stops.find((x) => x.key === r.stop) || {}).label).filter(Boolean);
   say(`${o.name} is now your ${stop.label.toLowerCase()} choice.`);
   announce(`${o.name} chosen for ${stop.label}.` + (affected.length ? ` This also changes: ${affected.join(', ')}.` : ''));
@@ -123,7 +105,8 @@ function planStep() {
   update({ j: Object.assign({}, state.j, { stopIdx: i }), slide: 0, why: false, change: false, sheet: false });
   announce(`${m[i].label}: ${m[i].item.name}.`);
   later(() => {
-    update({ j: Object.assign({}, state.j, decide(m[i].key)) });
+    confirmStop(m[i].key);
+    update({});
     later(planStep, 350);
   }, 900);
 }
@@ -192,7 +175,7 @@ function nearbyFor(pt) {
 // ------------------------------------------------------------------ pieces
 
 function budgetBar(m, idx, reach) {
-  const p = state.plan.profile, b = budgetModel(m, p);
+  const b = summary(state).budget;
   const widths = m.map((x) => (x.price / b.denom) * 100);
   const start = lastSegs && lastSegs.length === widths.length ? lastSegs : widths;
   lastSegs = widths;
@@ -206,15 +189,15 @@ function budgetBar(m, idx, reach) {
   requestAnimationFrame(() => requestAnimationFrame(() => segs.forEach((el, i) => { el.style.flexBasis = widths[i].toFixed(2) + '%'; })));
   return h('section', { class: 'bud', 'aria-label': 'Budget' },
     h('div', { class: 'budtop' },
-      h('span', null, `Planned ${inr(b.total)} · locked in ${inr(b.locked)}`),
+      h('span', { 'data-budget-line': '' }, budgetLine(b)),
       h('span', { class: b.over ? 'over' : '' }, b.over ? `Over budget by ${inr(b.total - b.budget)}`
-        : `${inr(b.budget - b.total)} of ${inr(b.budget)} still free`)),
+        : `${inr(b.free)} still free`)),
     h('div', { class: 'bar', role: 'group', 'aria-label': `Budget bar: planned ${inr(b.total)} against ${inr(b.budget)}` },
       segs, h('div', { class: 'mark', 'aria-hidden': 'true', style: { left: `calc(${((b.budget / b.denom) * 100).toFixed(2)}% - 2px)` } })),
     h('div', { class: 'legend', 'aria-hidden': 'true' },
       h('span', null, 'Solid: decided'), h('span', null, 'Striped: still a suggestion'), h('span', null, 'Red line: your budget')),
     h('ul', { class: 'budlist', 'aria-label': 'Budget by stop' }, m.map((x, i) => h('li', null,
-      h('button', { type: 'button', 'aria-disabled': i > reach ? 'true' : null,
+      h('button', { type: 'button', 'aria-disabled': i > reach ? 'true' : null, 'data-stop': x.key, 'data-price': x.price,
         onClick: () => (i > reach ? say('Decide the earlier stops first.') : openStop(i)) },
         h('span', { class: `sw ${x.decided ? 'd' : 'p'}`, 'aria-hidden': 'true' }),
         `${x.label} ${inr(x.price)}`, h('span', { class: 'sr' }, x.decided ? ', decided' : ', suggestion'))))));
@@ -428,8 +411,8 @@ function proposal(m, idx) {
         state.changeMsg ? h('p', { class: 'chgmsg', role: 'status' }, state.changeMsg) : null) : null));
 }
 
-function finale(m) {
-  const b = budgetModel(m, state.plan.profile);
+function finale() {
+  const b = summary(state).budget;
   return h('section', { class: 'fin', 'aria-labelledby': 'fin-h' },
     h('p', { class: 'step' }, 'The route is complete'),
     h('h2', { id: 'fin-h', class: 'disp h1', tabindex: '-1' }, 'Every stop is decided.'),
@@ -482,6 +465,11 @@ export function sheetView() {
         h('div', null, h('p', { class: 'step' }, cur.s.label + ' · other ways to do it'),
           h('h2', { id: 'sheet-h', class: 'disp', style: { fontSize: '30px' } }, 'Pick one to compare')),
         h('button', { id: 'sheet-x', class: 'btn', type: 'button', onClick: close }, 'Close')),
+      h('div', { class: 'sheetcur' },
+        h('div', null, h('p', { class: 'step', style: { margin: '0' } }, 'Your current choice'),
+          h('b', null, cur.item.name), ' · ' + inr(cur.price)),
+        h('button', { class: 'btn mari', type: 'button', onClick: () => { state.sheet = false; lookGood(m); } },
+          cur.decided ? 'Keep and continue' : 'Looks good')),
       state.changeMsg ? h('p', { class: 'chgmsg', role: 'status' }, state.changeMsg) : null,
       h('ul', { class: 'alts' }, alts)));
 }
@@ -510,6 +498,6 @@ export function journeyView(opts) {
         onClick: () => setJ({ nearby: !j.nearby, view: !j.nearby ? 'map' : j.view, pin: null }) }, h('span', { class: 'knob', 'aria-hidden': 'true' }), 'Nearby'),
       h('button', { class: 'btn', type: 'button', disabled: state.planning || !undecided, onClick: planRest }, 'Plan the rest for me')),
     j.view === 'map' ? mapView(m) : j.view === 'list' ? listView(m, idx, reach) : pathView(m, idx, reach, !!(opts && opts.routeChanged)),
-    idx >= n ? finale(m) : proposal(m, idx),
+    idx >= n ? finale() : proposal(m, idx),
     plan.notes && plan.notes.length ? h('ul', { class: 'notes', 'aria-label': 'Notes about this plan' }, plan.notes.map((t) => h('li', null, t))) : null);
 }

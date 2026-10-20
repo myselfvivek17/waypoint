@@ -122,7 +122,7 @@ def venue_stop(p: Profile, r: RulesResult, cands: list[Place]) -> DraftStop:
         size = r.venue_size or "a suitable venue"
         return DraftStop(key="venue", pick=DraftOption(
             name=f"{size[0].upper()}{size[1:]} near {where}", price=_r100(line),
-            reason=f"Fits {guests} guests within {inr(line)}.",
+            reason=f"Fits {guests} guests within the venue share of your budget.",
             why="I couldn't reach live place listings, so this is the kind of place to look for."),
             options=[DraftOption(kind="Cheaper", name=f"A home, terrace or clubhouse near {where}",
                                  price=_r100(line * .45), reason="Saves the hall rental; food is brought in."),
@@ -199,7 +199,7 @@ def food_stop(p: Profile, r: RulesResult) -> DraftStop:
     reason = f"{guests} guests{', all vegetarian' if veg else ''}{', with a separate Jain counter' if jain else ''}."
     q = "thali" if guests <= 40 else "Indian buffet"
     return DraftStop(key="food", pick=DraftOption(name=name[0].upper() + name[1:], price=rate, reason=reason,
-                                                  why=f"{r.catering or 'This format'} keeps it near {inr(rate)} a guest.",
+                                                  why=f"{(r.catering or 'This format')[0].upper()}{(r.catering or 'This format')[1:]} keeps the per-guest cost inside the food share.",
                                                   photo_query=q),
                      options=[DraftOption(kind="Cheaper", name="Chaat, snacks and a rice dish", price=_r5(rate * .75),
                                           reason="Lighter, and easy to make Jain-friendly.", photo_query="chaat"),
@@ -266,7 +266,7 @@ def simple_stop(key: str, p: Profile, r: RulesResult) -> DraftStop:
                 ("Different vibe", "Hired emcee or coordinator", 2.0, "Someone else runs the room, so you can enjoy it.",
                  "")]
     return DraftStop(key=key, pick=DraftOption(name=rec[0], price=_r100(line), reason=rec[1],
-                                               why=f"Sized to about {inr(line)} of your budget.", photo_query=rec[2]),
+                                               why=f"Sized to about {round(r.split[key] * 100)}% of your budget.", photo_query=rec[2]),
                      options=[DraftOption(kind=k, name=n, price=_r100(line * f), reason=why, photo_query=q)
                               for k, n, f, why, q in opts])
 

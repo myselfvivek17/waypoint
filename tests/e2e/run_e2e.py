@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -74,6 +75,27 @@ def assert_no_null_text(page: Page) -> None:
     text = page.locator("body").inner_text()
     for bad in ("null", "undefined", "NaN", "[object Object]"):
         assert bad not in text, f"'{bad}' rendered in the page"
+
+
+def screen_totals(p: Page, nav: str) -> tuple[str, dict]:
+    """The budget line and per-stop prices as one screen shows them."""
+    p.click(f"nav >> text={nav}")
+    line = p.locator("[data-budget-line]").first
+    expect(line).to_be_visible()
+    stops = p.evaluate("""() => Object.fromEntries([...document.querySelectorAll('[data-stop][data-price]')]
+        .map((e) => [e.dataset.stop, Number(e.dataset.price)]))""")
+    return line.inner_text(), stops
+
+
+def check_totals_match(r: Run, when: str) -> None:
+    """Journey and My plan derive from one plan state, so their numbers must agree exactly."""
+    p = r.page
+    j_line, j_stops = screen_totals(p, "Journey")
+    p_line, p_stops = screen_totals(p, "My plan")
+    assert j_line == p_line, f"{when}: journey says {j_line!r}, My plan says {p_line!r}"
+    assert j_stops == p_stops and j_stops, f"{when}: per-stop prices differ {j_stops} vs {p_stops}"
+    assert sum(j_stops.values()) == int(re.sub(r"\D", "", j_line.split(" of ")[0])), f"{when}: total != sum of stops"
+    print(f"  totals match ({when}):", j_line)
 
 
 def flow(r: Run, dark: bool) -> None:
@@ -137,6 +159,8 @@ def flow(r: Run, dark: bool) -> None:
     p.wait_for_timeout(900)
     after = p.locator(".budtop span").first.inner_text()
     print("  budget", before, "→", after)
+    check_totals_match(r, "after picking an option")
+    p.click("nav >> text=Journey")
 
     r.step("Escape closes the sheet and returns focus")
     p.click("#opt-btn")
@@ -170,11 +194,14 @@ def flow(r: Run, dark: bool) -> None:
     p.click("nav >> text=My plan")
     expect(p.locator(".task").first).to_be_visible()
     p.locator(".task input").first.check()
+    check_totals_match(r, "after booking a task")
     p.click("#view >> text=Cut the budget by 20%")
     expect(p.locator("#diff-h")).to_be_visible(timeout=40000)
     r.shot("plan-diff" + suffix)
     p.click("#view >> text=Apply changes")
     expect(p.locator("#diff-h")).to_have_count(0)
+    check_totals_match(r, "after an adjustment")
+    assert "32,000" in p.locator("[data-budget-line]").first.inner_text()
     p.click("#view >> text=Copy invite")
     expect(p.locator(".inv")).to_be_visible()
     with p.expect_download() as dl:
@@ -255,7 +282,7 @@ def run_axe(browser, axe_path: Path, shots: Path) -> list:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--live", action="store_true", help="use the real model from .env")
-    ap.add_argument("--shots", default=str(ROOT.parent / "celebration-planner-notes" / "shots"))
+    ap.add_argument("--shots", default=str(ROOT.parent / "celebration-planner-notes" / "shots" / "v2"))
     ap.add_argument("--axe", default="")
     ap.add_argument("--chrome", default=CHROME)
     args = ap.parse_args()

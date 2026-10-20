@@ -24,7 +24,8 @@ from .places import Place, PlaceSet
 from .rules import RulesResult, inr
 from .schemas import (Block, Day, DayItem, DraftOption, DraftPlan, DraftStop, Option, PhotoHint, Plan, Profile,
                       Ripple, Source, Stop, Strict, Task)
-from .validators import CAPS, cap_list, clamp_due, clip, fit_budget, fix_option_kinds, line_total, to_int
+from .validators import (CAPS, cap_list, clamp_due, clip, drop_money, drop_wrong_kind, fit_budget, fix_option_kinds,
+                         line_total, sentences, to_int)
 
 log = logging.getLogger("waypoint.planner")
 
@@ -161,11 +162,18 @@ def make_option(d: DraftOption, *, key: str, oid: str, kind: str, p: Profile, ps
     elif key not in NO_PHOTO:
         q = _query(d.photo_query) or _query(fallback.photo_query)
         photo = PhotoHint(query=q, relation="inspiration") if q else None
+    reason, why = drop_money(d.reason), drop_money(d.why)
+    if key == "venue" and place is not None:
+        # The facts about a real place come from OSM, not from the model's prose.
+        facts = f"{place.label}, {place.dist_km} km from {templates.area_short(p)}."
+        prose = " ".join(x for x in sentences(reason) if " km" not in x)  # distance is in the facts
+        reason = " ".join(x for x in (facts, drop_wrong_kind(prose, place.label)) if x)
+        why = drop_wrong_kind(why, place.label)
     return Option(
         id=oid, kind=kind, name=name, price=price, per_guest=per_guest,
         cap=place.capacity if place else None, outdoor=bool(place.outdoor if place else d.outdoor),
-        reason=clip(d.reason, CAPS["reason"]) or clip(fallback.reason, CAPS["reason"]),
-        why=clip(d.why, CAPS["why"]) or clip(fallback.why, CAPS["why"]),
+        reason=clip(reason, CAPS["reason"]) or clip(drop_money(fallback.reason), CAPS["reason"]),
+        why=clip(why, CAPS["why"]) or clip(drop_money(fallback.why), CAPS["why"]),
         place_id=place.id if place else None, where=where, dist_km=place.dist_km if place else None,
         lat=place.lat if place else None, lon=place.lon if place else None,
         photo=photo, tone=_tone(oid + name),
@@ -356,6 +364,7 @@ class AdjustIn(Strict):
     plan: Plan
     chosen: dict[str, str] = Field(default_factory=dict, max_length=12)
     ripples: list[RippleState] = Field(default_factory=list, max_length=30)
+    booked: list[str] = Field(default_factory=list, max_length=20)  # stops already paid for: never swapped
     request: str = Field(min_length=1, max_length=300)
 
 
@@ -440,7 +449,14 @@ def _take(stop: Stop, o: Option, chosen: dict[str, str], ripples: list[RippleSta
 def replan(plan: Plan, p: Profile, now: dt.date) -> Plan:
     """Same stops, refreshed rules, explanations and deadlines for a changed profile."""
     r = rules.evaluate(p, now)
-    stops = [s.model_copy(update={"rule": r.stop_rule(s.key, p)}) for s in plan.stops]
+    old = plan.profile.guests
+    stops = [s.model_copy(update={"rule": r.stop_rule(s.key, p)}, deep=True) for s in plan.stops]
+    if old and p.guests and old != p.guests:  # keep head counts in the prose in step with the profile
+        pat = re.compile(rf"\b{old}( guests)\b")
+        for s in stops:
+            for o in _all(s):
+                o.reason = pat.sub(rf"{p.guests}\1", o.reason)
+                o.why = pat.sub(rf"{p.guests}\1", o.why)
     return plan.model_copy(update={"profile": p, "title": p.title or plan.title, "stops": stops,
                                    "insights": r.insights, "tasks": make_tasks(stops, p, r, now), "today": now})
 
@@ -456,9 +472,12 @@ async def adjust(inp: AdjustIn, now: dt.date) -> AdjustOut:
     res = await llm.ask("adjust", ADJUST_INSTRUCTIONS, data, Intent,
                         fallback=lambda: regex_intent(inp.request, now), max_tokens=200,
                         timeout=15)
-    intent = res.value
-    if intent.action not in Action.__args__:  # type: ignore[attr-defined]
-        intent = regex_intent(inp.request, now)
+    intent, source = res.value, res.source
+    if intent.action not in Action.__args__ or intent.action == "unknown":  # type: ignore[attr-defined]
+        det = regex_intent(inp.request, now)
+        if det.action != "unknown" or intent.action not in Action.__args__:  # type: ignore[attr-defined]
+            # The rules parser understood what the model did not: say so instead of doing nothing.
+            intent, source = det, ("fallback" if source == "ai" else source)
     guests, budget, date = p.guests or 1, p.budget or 0, p.date
     chosen = {k: v for k, v in inp.chosen.items() if k in keys}
     ripples = [x for x in inp.ripples if x.stop in keys]
@@ -467,8 +486,10 @@ async def adjust(inp: AdjustIn, now: dt.date) -> AdjustOut:
     title, note = "What changes", ""
     venue = next((s for s in plan.stops if s.key == "venue"), None)
 
+    booked = set(inp.booked)
+
     def cheapest_fit(pred) -> Option | None:
-        if venue is None:
+        if venue is None or venue.key in booked:
             return None
         fits = [o for o in _all(venue) if pred(o) and (o.cap is None or o.cap >= guests)]
         return min(fits, key=lambda o: o.price) if fits else None
@@ -481,6 +502,8 @@ async def adjust(inp: AdjustIn, now: dt.date) -> AdjustOut:
                 return
             best = None
             for s, item, price in cur:
+                if s.key in booked:
+                    continue
                 for o in _all(s):
                     if o.id == item.id or (o.cap and o.cap < guests):
                         continue
@@ -532,6 +555,9 @@ async def adjust(inp: AdjustIn, now: dt.date) -> AdjustOut:
                 ripples = _take(venue, fit, chosen, ripples)
             else:
                 note = f"I have no {'open-air' if want else 'covered'} venue among the options. "
+    elif act == "cheaper" and intent.stop in booked:
+        s = next(x for x in plan.stops if x.key == intent.stop)
+        title, note = f"A cheaper {s.label.lower()}", f"The {s.label.lower()} is already booked, so I left it alone. "
     elif act == "cheaper" and intent.stop in keys:
         s = next(x for x in plan.stops if x.key == intent.stop)
         cur = next(it for st, it, _ in before if st.key == s.key)
@@ -557,7 +583,7 @@ async def adjust(inp: AdjustIn, now: dt.date) -> AdjustOut:
         return AdjustOut(understood=False, title="", rows=[], note=reply or (
             "I can cut or set the budget, add or remove guests, move it outdoors or indoors, make one stop "
             "cheaper, or move the date."), profile=p, chosen=inp.chosen, ripples=inp.ripples, plan=plan,
-            source=res.source)
+            source=source)
 
     new_p = p.model_copy(update={"guests": guests, "budget": budget, "date": date})
     after = priced(plan, guests, chosen, ripples)
@@ -581,7 +607,7 @@ async def adjust(inp: AdjustIn, now: dt.date) -> AdjustOut:
     note += (f"Still {inr(gap)} over budget. Try cutting a stop or the guest list." if gap > 0
              else f"Fits the budget with {inr(-gap)} to spare.")
     return AdjustOut(understood=True, title=clip(title, 80), rows=rows, note=note, profile=new_p, chosen=chosen,
-                     ripples=ripples, plan=replan(plan, new_p, now), source=res.source)
+                     ripples=ripples, plan=replan(plan, new_p, now), source=source)
 
 
 # ------------------------------------------------------------------ calendar

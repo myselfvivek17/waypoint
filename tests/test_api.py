@@ -191,3 +191,25 @@ def test_static_assets_are_compressed_and_revalidated():
     r = client.get("/css/app.css", headers={"accept-encoding": "gzip"})
     assert r.status_code == 200 and r.headers.get("content-encoding") == "gzip"
     assert r.headers["cache-control"] == "no-cache" and "etag" in r.headers
+
+
+def test_adjust_model_unknown_falls_back_to_the_rules_parser(plan, monkeypatch):
+    async def unknown(*a, **k):
+        return planner.llm.Result(planner.Intent(action="unknown", reply="Not sure."), "ai")
+    monkeypatch.setattr(planner.llm, "ask", unknown)
+    r = client.post("/api/adjust", json={"plan": plan, "request": "add 15 guests"}).json()
+    assert r["understood"] and r["profile"]["guests"] == 45 and r["source"] == "fallback"
+
+
+def test_adjust_replan_keeps_guest_counts_in_prose(plan):
+    r = client.post("/api/adjust", json={"plan": plan, "request": "add 10 guests"}).json()
+    texts = " ".join(o["reason"] for s in r["plan"]["stops"] for o in [s["rec"], *s["options"]])
+    assert "30 guests" not in texts
+
+
+def test_adjust_never_swaps_a_booked_stop(plan):
+    r = client.post("/api/adjust", json={"plan": plan, "booked": ["venue", "food"],
+                                         "request": "cut the budget by 40%"}).json()
+    assert r["understood"] and "venue" not in r["chosen"] and "food" not in r["chosen"]
+    labels = [row["label"] for row in r["rows"]]
+    assert "Venue" not in labels and "Food" not in labels

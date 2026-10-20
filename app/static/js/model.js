@@ -23,11 +23,24 @@ export function stopsModel(st) {
   });
 }
 
-export function budgetModel(stops, profile) {
+export function budgetModel(stops, profile, ticks = {}) {
   const total = stops.reduce((a, x) => a + x.price, 0);
   const budget = profile.budget || total;
-  const locked = stops.filter((x) => x.decided).reduce((a, x) => a + x.price, 0);
-  return { total, budget, locked, denom: Math.max(budget, total, 1), over: total > budget };
+  const booked = stops.filter((x) => ticks[x.key]).reduce((a, x) => a + x.price, 0);
+  const decided = stops.filter((x) => x.decided).length;
+  return { total, budget, booked, decided, count: stops.length, free: budget - total,
+    denom: Math.max(budget, total, 1), over: total > budget };
+}
+
+/** Everything a screen shows about the plan, derived from one place. */
+export function summary(st) {
+  const stops = stopsModel(st);
+  return { stops, budget: budgetModel(stops, st.plan.profile, st.ticks), profile: st.plan.profile };
+}
+
+/** The one wording of the budget line, used on every screen. */
+export function budgetLine(b) {
+  return `Planned ${inr(b.total)} of ${inr(b.budget)} · booked ${inr(b.booked)}`;
 }
 
 /** First stop not yet decided, or n when all are. */

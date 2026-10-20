@@ -1,7 +1,7 @@
 /* Welcome screen and the one-question-at-a-time intake chat. */
 import { api, errorText } from './api.js';
 import { h, inr, parseISO, shortDate } from './dom.js';
-import { freshChat, freshJourney, state } from './store.js';
+import { adoptPlan, discardDetailEdits, freshChat, freshJourney, state } from './store.js';
 import { announce, go, say, stopThinking, think, todayIso, update } from './ui.js';
 
 const STARTERS = ['Birthday', 'Wedding', 'House-warming', 'Community event'];
@@ -90,7 +90,8 @@ export async function buildPlan() {
     say(errorText(r));
     return;
   }
-  update({ busy: false, plan: r.data, j: freshJourney(), ticks: {}, planDirty: false, diff: null }, { render: false });
+  adoptPlan(r.data);
+  update({ busy: false }, { render: false });
   go('journey', { focus: 'stop' });
   const first = r.data.stops[0];
   announce(`Your route has ${r.data.stops.length} stops. Stop 1, ${first.label}: ${first.rec.name}.`);
@@ -244,8 +245,8 @@ function doneView() {
       !p || state.planDirty
         ? h('button', { class: 'btn mari', type: 'button', disabled: state.busy, onClick: buildPlan },
           p ? 'Re-plan with these details' : 'Start the journey') : null,
-      p ? h('button', { class: 'btn', type: 'button', onClick: () => go('journey', { focus: 'stop' }) },
-        state.planDirty ? 'Keep the current plan' : 'Back to the journey') : null),
+      p ? h('button', { class: 'btn', type: 'button', onClick: () => { discardDetailEdits(); go('journey', { focus: 'stop' }); } },
+        state.planDirty ? 'Keep the current plan (undo these edits)' : 'Back to the journey') : null),
     state.err ? h('p', { class: 'err', role: 'alert' }, state.err) : null);
 }
 

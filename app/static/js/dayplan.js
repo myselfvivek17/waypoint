@@ -2,8 +2,8 @@
 import { api, errorText } from './api.js';
 import { dayIcon } from './art.js';
 import { h, inr, longDate } from './dom.js';
-import { budgetModel, stopsModel, taskRows } from './model.js';
-import { state } from './store.js';
+import { budgetLine, stopsModel, summary, taskRows } from './model.js';
+import { applyAdjustment, state, toggleTick } from './store.js';
 import { announce, go, say, stopThinking, think, todayIso, update } from './ui.js';
 
 const ADJ_CHIPS = ['Cut the budget by 20%', 'Add 15 guests', 'Move it outdoors', 'Make the food cheaper'];
@@ -37,33 +37,27 @@ async function runAdjust(text) {
   if (!request) return;
   update({ busy: true, adjMsg: '', diff: null });
   think('Working out what changes…');
-  const r = await api.adjust({ plan: state.plan, chosen: state.j.chosen, ripples: state.j.ripples, request });
+  const booked = state.plan.stops.map((s) => s.key).filter((k) => state.ticks[k]);
+  const r = await api.adjust({ plan: state.plan, chosen: state.j.chosen, ripples: state.j.ripples, booked, request });
   stopThinking();
   if (!r.ok) { update({ busy: false, adjMsg: errorText(r) }); return; }
   if (!r.data.understood) {
-    update({ busy: false, adjMsg: r.data.note }, { focus: 'adj-msg' });
+    update({ busy: false, adjMsg: r.data.note, adjSource: r.data.source }, { focus: 'adj-msg' });
     announce(r.data.note);
     return;
   }
-  update({ busy: false, diff: Object.assign({ request }, r.data), adjDraft: '' }, { focus: 'diff-h' });
+  update({ busy: false, diff: Object.assign({ request }, r.data), adjDraft: '', adjSource: r.data.source }, { focus: 'diff-h' });
   announce(`${r.data.title}. ${r.data.note}`);
 }
 
 function applyDiff() {
-  const d = state.diff, j = state.j;
-  const before = stopsModel(state);
-  const next = Object.assign({}, state, { plan: d.plan, j: Object.assign({}, j, { chosen: d.chosen, ripples: d.ripples }) });
-  const after = stopsModel(next);
-  const updated = Object.assign({}, j.updated), decided = Object.assign({}, j.decided);
-  after.forEach((a, i) => {
-    const b = before[i];
-    if (a.item.id !== b.item.id || a.price !== b.price) {
-      updated[a.key] = `changed by "${d.request}"`;
-      if (a.item.id !== b.item.id) decided[a.key] = false;
-    }
-  });
-  update({ plan: d.plan, profile: d.profile, diff: null,
-    j: Object.assign({}, j, { chosen: d.chosen, ripples: d.ripples, updated, decided }) });
+  const d = state.diff;
+  const before = Object.fromEntries(stopsModel(state).map((x) => [x.key, x]));
+  const next = Object.assign({}, state, { plan: d.plan, j: Object.assign({}, state.j, { chosen: d.chosen, ripples: d.ripples }) });
+  const changes = stopsModel(next).filter((a) => !before[a.key] || a.item.id !== before[a.key].item.id || a.price !== before[a.key].price)
+    .map((a) => ({ key: a.key, itemChanged: !before[a.key] || a.item.id !== before[a.key].item.id }));
+  applyAdjustment(d, changes);
+  update({});
   say('Plan updated. Changed stops are marked on the journey.');
 }
 
@@ -93,6 +87,15 @@ async function copyInvite() {
 
 // ------------------------------------------------------------------ plan view
 
+/** The badge says who reads the request: the model when one is live, otherwise the rules parser.
+    After a request it reflects who actually answered (a live model can still fail over to the rules). */
+function adjustTag() {
+  const last = state.diff ? state.diff.source : state.adjSource;
+  const ai = last ? last === 'ai' : state.llmMode === 'live' && !state.demo.offline;
+  return h('span', { class: 'aitag' + (ai ? ' ai' : ''), 'data-source': ai ? 'ai' : 'rules' },
+    ai ? 'AI' : 'Rules parser · AI offline');
+}
+
 function diffView(d) {
   return h('div', { role: 'region', 'aria-labelledby': 'diff-h' },
     h('h3', { class: 'disp h2', id: 'diff-h', tabindex: '-1', style: { fontSize: '22px' } }, d.title),
@@ -101,7 +104,7 @@ function diffView(d) {
       h('thead', null, h('tr', null, h('th', { scope: 'col' }, 'What'), h('th', { scope: 'col' }, 'Before'), h('th', { scope: 'col' }, 'After'))),
       h('tbody', null, d.rows.map((r) => h('tr', null, h('td', null, r.label), h('td', null, r.before), h('td', null, h('b', null, r.after)))))),
     h('p', { class: 'chgmsg' }, d.note,
-      d.source !== 'ai' ? h('span', { class: 'tt2' }, ' (Understood by the rules, not the AI.)') : null),
+      d.source !== 'ai' ? h('span', { class: 'tt2' }, ' (Understood by the rules parser, not the AI.)') : null),
     h('div', { class: 'pact' },
       h('button', { class: 'btn mari', type: 'button', onClick: applyDiff }, 'Apply changes'),
       h('button', { class: 'btn', type: 'button', onClick: () => update({ diff: null }, { focus: 'adj-in' }) }, 'Keep as it is')));
@@ -109,15 +112,14 @@ function diffView(d) {
 
 export function planView() {
   const plan = state.plan, p = plan.profile;
-  const m = stopsModel(state), b = budgetModel(m, p);
+  const { stops: m, budget: b } = summary(state);
   const rows = taskRows(state, m, todayIso());
   const next = rows.find((t) => !t.ticked) || null;
-  const spentKeys = new Set(rows.filter((t) => t.ticked && t.price).map((t) => t.stop));
-  const spent = m.filter((x) => spentKeys.has(x.key)).reduce((a, x) => a + x.price, 0);
+  const spentKeys = new Set(m.filter((x) => state.ticks[x.key]).map((x) => x.key));
   const maxP = Math.max(1, ...m.map((x) => x.price));
   const late = rows.filter((t) => !t.ticked && t.late).length;
   const allDecided = m.every((x) => x.decided);
-  const tick = (id) => update({ ticks: Object.assign({}, state.ticks, { [id]: !state.ticks[id] }) }, { focus: 'tk-' + id });
+  const tick = (id) => { toggleTick(id); update({}, { focus: 'tk-' + id }); };
   return h('main', { class: 'wrap plan', id: 'main' },
     h('p', { class: 'step' }, 'My plan'),
     h('h1', { class: 'disp h1', tabindex: '-1' }, plan.title),
@@ -140,9 +142,9 @@ export function planView() {
           t.costText ? h('span', { class: 'tcost' }, t.costText) : null)))),
       h('section', { 'aria-labelledby': 'bud-h' },
         h('h2', { class: 'disp h2', id: 'bud-h', style: { marginTop: '0' } }, 'Budget'),
-        h('p', { style: { margin: '0 0 8px' } }, 'Planned ', h('b', null, inr(b.total)), ` of ${inr(b.budget)} · Spent `, h('b', null, inr(spent)),
+        h('p', { style: { margin: '0 0 8px' } }, h('span', { 'data-budget-line': '' }, budgetLine(b)),
           b.over ? h('span', { class: 'over' }, ` · ${inr(b.total - b.budget)} over`) : null),
-        h('div', null, m.map((x) => h('div', { class: 'brow' },
+        h('div', null, m.map((x) => h('div', { class: 'brow', 'data-stop': x.key, 'data-price': x.price },
           h('button', { class: 'linkb', type: 'button', onClick: () => { update({ j: Object.assign({}, state.j, { stopIdx: x.i, view: 'path' }) }, { render: false }); go('journey', { focus: 'stop' }); } },
             x.label, h('span', { class: 'sr' }, ': open this stop')),
           h('div', { class: 'btrack', 'aria-hidden': 'true' },
@@ -150,7 +152,7 @@ export function planView() {
             h('div', { class: 'bspent', style: { width: spentKeys.has(x.key) ? ((x.price / maxP) * 100).toFixed(1) + '%' : '0' } })),
           h('span', null, inr(x.price), h('span', { class: 'sr' }, spentKeys.has(x.key) ? ', booked' : ', not booked yet'))))),
         h('div', { class: 'adjust' },
-          h('h2', { class: 'disp h2' }, 'Ask to adjust ', h('span', { class: 'aitag ai' }, 'AI')),
+          h('h2', { class: 'disp h2' }, 'Ask to adjust ', adjustTag()),
           h('form', { class: 'ans', onSubmit: (e) => { e.preventDefault(); runAdjust(state.adjDraft); } },
             h('label', { class: 'sr', for: 'adj-in' }, 'What should change?'),
             h('input', { id: 'adj-in', class: 'cin', type: 'text', autocomplete: 'off', maxlength: 300,
