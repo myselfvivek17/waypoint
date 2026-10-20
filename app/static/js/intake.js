@@ -1,6 +1,7 @@
 /* Welcome screen and the one-question-at-a-time intake chat. */
 import { api, errorText } from './api.js';
-import { h, inr, parseISO, shortDate } from './dom.js';
+import { daysBetween, h, inr, longDate, parseISO, shortDate } from './dom.js';
+import { budgetLine, summary } from './model.js';
 import { adoptPlan, discardDetailEdits, freshChat, freshJourney, state } from './store.js';
 import { announce, go, say, stopThinking, think, todayIso, update } from './ui.js';
 
@@ -53,7 +54,9 @@ export async function sendChat(message, asked, edit = false) {
     busy: false, draft: '', editing: null, profile: out.profile,
     planDirty: state.planDirty || (!!state.plan && changed),
     chat: { transcript: transcript.slice(-16), ask: out.ask, reply: out.reply, chips: out.chips || [],
-      placeholder: out.placeholder || '', done: out.done, block: out.block, remaining: out.remaining, source: out.source },
+      placeholder: out.placeholder || '', done: out.done, block: out.block, remaining: out.remaining, source: out.source,
+      // keep the model's own summary until an edit replaces it with the rules' one
+      understood: out.understood || '', understoodSource: out.understood_source || 'mock', insights: out.insights || [] },
   }, { focus: edit ? null : 'question' });
   if (out.profile.area && out.profile.area !== hadArea) api.prefetch(out.profile.area, out.profile.guests);
   announce(out.block ? out.block.title : out.done ? "That's everything I need." : out.reply);
@@ -103,11 +106,20 @@ export async function buildPlan() {
   announce(`Your route has ${r.data.stops.length} stops. Stop 1, ${first.label}: ${first.rec.name}.`);
 }
 
+/** The summary line and first insights for details that did not come through the chat (samples). */
+async function refreshUnderstanding() {
+  const r = await api.chat({ profile: state.profile, message: '', asked: null, transcript: [], edit: true });
+  if (!r.ok) return;
+  state.chat = Object.assign({}, state.chat, { understood: r.data.understood, understoodSource: r.data.understood_source,
+    insights: r.data.insights || [] });
+}
+
 export function loadSample(key) {
   newEvent();
   const p = Object.assign({}, SAMPLES[key]);
   p.date = futureDate(p.date);
   update({ profile: p, chat: Object.assign(freshChat(), { done: true }) }, { render: false });
+  refreshUnderstanding();
   buildPlan();
 }
 
@@ -239,14 +251,15 @@ function questionView(c) {
     state.err ? h('p', { class: 'err', id: 'a-err', role: 'alert' }, state.err) : null);
 }
 
-function doneView() {
+function doneActions() {
   const p = state.plan;
-  return h('div', null,
-    h('h2', { class: 'disp qq', id: 'q-h', tabindex: '-1' },
-      p && state.planDirty ? 'Your details changed.' : "That's everything I need."),
+  return h('section', { class: 'dact', 'aria-labelledby': 'q-h' },
+    h('h2', { class: 'disp dacth', id: 'q-h', tabindex: '-1' },
+      p && state.planDirty ? 'Your details changed.' : p ? 'Your plan uses these details.' : "That's everything I need."),
     h('p', { class: 'lead' }, p && state.planDirty
       ? 'I can re-plan every stop around the new details, or you can keep the current plan.'
-      : "I'll walk you through one decision at a time, starting with the venue. Change any detail on the right whenever you like."),
+      : p ? 'Change anything here and I will offer to re-plan.'
+        : "I'll walk you through one decision at a time, starting with the venue. Change any detail whenever you like."),
     h('div', { class: 'pact' },
       !p || state.planDirty
         ? h('button', { class: 'btn mari', type: 'button', disabled: state.busy, onClick: buildPlan },
@@ -256,9 +269,107 @@ function doneView() {
     state.err ? h('p', { class: 'err', role: 'alert' }, state.err) : null);
 }
 
+// ------------------------------------------------------------------ details (after the chat)
+
+const LEVEL = { info: 'Note', warn: 'Heads-up', block: 'Blocker' };
+const GROUPS = [
+  ['Who', [['who', 'For', 'A name and a few things they enjoy'], ['type', 'Occasion', '']]],
+  ['When', [['date', 'Date', 'e.g. 15 Nov']]],
+  ['Where', [['area', 'Area', 'e.g. Gachibowli, Hyderabad']]],
+  ['How many', [['guests', 'Guests', 'e.g. 30']]],
+  ['Budget', [['budget', 'For the whole day', 'e.g. 40000 or 1.5 lakh']]],
+  ['Food & needs', [['food', 'Food', 'e.g. vegetarian, a few Jain guests'], ['access', 'Access', 'e.g. lift, seating for elders']]],
+  ['What you already have', [['have', 'Already sorted', 'e.g. a family priest, my aunt is cooking']]],
+];
+
+function fieldValue(key, p) {
+  const today = todayIso();
+  if (key === 'type') return TYPE_LABEL[p.type] || 'Celebration';
+  if (key === 'date' && p.date) {
+    const n = daysBetween(today, p.date);
+    return [longDate(p.date), h('span', { class: 'tt2' }, n === 0 ? ' · today' : n > 0 ? ` · ${n} day${n === 1 ? '' : 's'} to go` : '')];
+  }
+  if (key === 'guests' && p.guests) return p.guests + ' guests';
+  if (key === 'budget' && p.budget) {
+    return [inr(p.budget), p.guests ? h('span', { class: 'tt2' }, ` · ${inr(p.budget / p.guests)} a guest`) : null];
+  }
+  return p[key] || null;
+}
+
+function rawValue(key, p) {
+  if (key === 'date' && p.date) return shortDate(p.date) + ' ' + p.date.slice(0, 4);
+  return p[key] == null ? '' : String(p[key]);
+}
+
+function fieldRow(key, label, placeholder, p) {
+  const val = fieldValue(key, p);
+  const save = (e) => {
+    e.preventDefault();
+    const v = state.editDraft.trim();
+    state.editing = null;
+    if (v && v !== rawValue(key, p)) sendChat(v, key, true);
+    else update({}, { focus: 'ed-' + key });
+  };
+  if (state.editing === key) {
+    const input = key === 'type'
+      ? h('div', { class: 'chips', role: 'group', 'aria-label': 'Occasion' }, Object.entries(TYPE_LABEL).map(([k, l]) =>
+        h('button', { class: 'chip', type: 'button', 'aria-pressed': String(p.type === k),
+          onClick: () => { state.editing = null; sendChat(k, 'type', true); } }, l)))
+      : h('input', { id: 'ed-in', class: 'cin', type: 'text', maxlength: 160, value: state.editDraft, placeholder,
+        autocomplete: 'off', onInput: (e) => { state.editDraft = e.target.value; },
+        onKeydown: (e) => { if (e.key === 'Escape') update({ editing: null }, { focus: 'ed-' + key }); } });
+    return h('div', { class: 'drow editing' },
+      h('dt', null, h('label', { for: key === 'type' ? null : 'ed-in' }, label)),
+      h('dd', null, h('form', { class: 'ans', onSubmit: save }, input,
+        key === 'type' ? null : h('button', { class: 'btn pri', type: 'submit' }, 'Save'),
+        h('button', { class: 'btn', type: 'button', onClick: () => update({ editing: null }, { focus: 'ed-' + key }) }, 'Cancel'))));
+  }
+  return h('div', { class: 'drow' },
+    h('dt', null, label),
+    h('dd', null, val || h('span', { class: 'tt2' }, key === 'have' ? 'Nothing yet: tell me what is already sorted.' : 'Not set')),
+    h('button', { class: 'linkb', id: 'ed-' + key, type: 'button',
+      onClick: () => update({ editing: key, editDraft: rawValue(key, p) }, { focus: key === 'type' ? null : 'ed-in' }) },
+    val ? 'Edit' : 'Add', h('span', { class: 'sr' }, ' ' + label)));
+}
+
+function detailsView() {
+  const c = state.chat, p = state.profile, plan = state.plan;
+  const n = p.date ? daysBetween(todayIso(), p.date) : null;
+  const ai = c.understoodSource === 'ai';
+  const sum = plan && !state.planDirty ? summary(state) : null;
+  return h('main', { class: 'wrap details', id: 'main' },
+    h('header', { class: 'dhero' },
+      h('p', { class: 'step' }, 'Details · ' + (TYPE_LABEL[p.type] || 'Celebration')),
+      h('h1', { class: 'disp h1', id: 'chat-h', tabindex: '-1' }, p.title || 'Your event'),
+      h('p', { class: 'dmeta' }, [p.date ? longDate(p.date) : 'Date to be set',
+        n != null && n >= 0 ? (n === 0 ? 'today' : `${n} day${n === 1 ? '' : 's'} to go`) : null,
+        p.area ? p.area : null].filter(Boolean).join(' · ')),
+      sum ? h('p', { class: 'dsum' }, h('span', { 'data-budget-line': '' }, budgetLine(sum.budget)),
+        ` · ${sum.budget.decided} of ${sum.budget.count} stops decided`) : null),
+    h('div', { class: 'dgrid' },
+      h('div', { class: 'dside' },
+        h('figure', { class: 'under' },
+          h('figcaption', null, 'What I understood ', h('span', { class: 'aitag' + (ai ? ' ai' : '') }, ai ? 'AI' : 'From your answers')),
+          h('blockquote', { class: 'disp' }, c.understood || 'Tell me a little more and I will sum it up here.')),
+        c.insights && c.insights.length ? h('section', { class: 'dins', 'aria-labelledby': 'dins-h' },
+          h('h2', { class: 'dgh', id: 'dins-h' }, 'First things the rules noticed ', h('span', { class: 'aitag' }, 'Rules engine, not AI')),
+          h('ul', null, c.insights.map((i) => h('li', null,
+            h('span', { class: 'lvl ' + i.level }, LEVEL[i.level] || 'Note'),
+            h('div', null, h('p', { class: 'rt' }, i.title), h('p', null, i.why)))))) : null,
+        doneActions()),
+      h('div', { class: 'dfields' },
+        GROUPS.map(([title, rows]) => h('section', { class: 'dgroup', 'aria-label': title },
+          h('h2', { class: 'dgh' }, title),
+          h('dl', null, rows.map(([key, label, ph]) => fieldRow(key, label, ph, p))))),
+        c.transcript.length ? h('details', { class: 'howgot' },
+          h('summary', null, `How we got here: ${c.transcript.length} answer${c.transcript.length === 1 ? '' : 's'}`),
+          c.transcript.map((t) => h('div', { class: 'tq' }, h('p', { class: 'tqq' }, t.q), h('p', { class: 'tqa' }, t.a)))) : null)));
+}
+
 export function chatView() {
   const c = state.chat;
-  const body = c.block ? blockView(c.block) : c.done ? doneView()
+  if (c.done && !c.block) return detailsView();
+  const body = c.block ? blockView(c.block) : c.done ? doneActions()
     : c.reply ? questionView(c)
       : h('p', { class: 'lead', id: 'q-h', tabindex: '-1' }, state.busy ? 'Reading that…' : state.err || 'Starting…');
   return h('main', { class: 'wrap chat', id: 'main' },

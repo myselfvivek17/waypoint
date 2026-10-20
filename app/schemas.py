@@ -37,6 +37,7 @@ class Profile(Strict):
     food: str = Field("", max_length=120)
     access: str = Field("", max_length=120)
     vibe: str = Field("", max_length=120)
+    have: str = Field("", max_length=160)  # what the host already has: "a family priest, my aunt cooks"
 
 
 # ---------- rules ----------

@@ -15,10 +15,10 @@ from typing import Literal
 from pydantic import BaseModel, Field, ValidationError
 
 from . import llm, rules
-from .schemas import Block, EventType, Profile, Source, Strict
+from .schemas import Block, EventType, Insight, Profile, Source, Strict
 from .validators import CAPS, cap_list, clip
 
-FieldName = Literal["guests", "budget", "area", "date", "who", "food", "access"]
+FieldName = Literal["guests", "budget", "area", "date", "who", "food", "access", "have", "type"]
 ASK_ORDER: list[str] = ["guests", "budget", "area", "date", "who", "food", "access"]
 REQUIRED = ["guests", "budget", "area", "date"]
 MAX_TURNS = 7
@@ -58,15 +58,20 @@ latest words), already_asked (fields asked before) and today (YYYY-MM-DD).
    "Aditya's 22nd birthday"), guests (integer), budget (integer rupees for the whole event:
    "40k" = 40000, "1.5 lakh" = 150000), area (neighbourhood and city), date (YYYY-MM-DD; with no year,
    the next such date on or after today), who (who it is for and what they love), food (dietary
-   needs), access (accessibility needs), vibe. Include only fields you are confident about.
+   needs), access (accessibility needs), vibe, have (things the host already has or will do
+   themselves, such as "a family priest" or "my aunt is cooking"). Include only fields you are confident about.
 2. Choose the ONE most useful next question and skip anything you can infer. Needed before
    planning: guests, budget, area, date. Also useful: who, food, access. Never ask about a field in
    already_asked. When nothing useful is left, set done to true.
 
+3. Always write "understood": one warm sentence (at most 30 words) saying what you understood about
+   the event so far, in your own words, without inventing anything.
+
 Reply with JSON only:
 {"profile": {changed fields only}, "done": false, "ask": "<one of guests|budget|area|date|who|food|access>",
- "reply": "<one short friendly question, at most 25 words>", "chips": ["up to 4 short tap answers"]}
-or {"profile": {changed fields only}, "done": true, "reply": "<one short sentence>"}
+ "reply": "<one short friendly question, at most 25 words>", "chips": ["up to 4 short tap answers"],
+ "understood": "<one sentence>"}
+or {"profile": {changed fields only}, "done": true, "reply": "<one short sentence>", "understood": "<one sentence>"}
 """
 
 
@@ -94,6 +99,9 @@ class ChatOut(BaseModel):
     block: Block | None = None
     remaining: int = 0
     source: Source
+    understood: str = ""            # one sentence: what the assistant took from the conversation
+    understood_source: Source = "mock"
+    insights: list[Insight] = []    # the rules engine's first reading of the details so far
 
 
 class ChatDraft(BaseModel):
@@ -104,6 +112,7 @@ class ChatDraft(BaseModel):
     ask: str | None = None
     reply: str = ""
     chips: list = []
+    understood: str = ""
 
 
 # ------------------------------------------------------------------ deterministic parsing
@@ -240,8 +249,10 @@ def extract(text: str, asked: str | None, profile: Profile, today: dt.date) -> d
         patch["area"] = clip(text, 120)
     elif asked is None and (area := parse_area(text)):
         patch["area"] = clip(area, 120)
-    if asked in ("who", "food", "access"):
-        patch[asked] = clip(text, {"who": 160, "food": 120, "access": 120}[asked])
+    if asked in ("who", "food", "access", "have"):
+        patch[asked] = clip(text, {"who": 160, "food": 120, "access": 120, "have": 160}[asked])
+    if asked == "type" and (t := detect_type(text) or (text.lower() if text.lower() in TYPES else None)):
+        patch["type"] = t
     return patch
 
 
@@ -250,7 +261,7 @@ def sanitize_patch(raw: dict, today: dt.date) -> dict:
     out: dict = {}
     if not isinstance(raw, dict):
         return out
-    limits = {"title": 80, "area": 120, "who": 160, "food": 120, "access": 120, "vibe": 120}
+    limits = {"title": 80, "area": 120, "who": 160, "food": 120, "access": 120, "vibe": 120, "have": 160}
     for key, value in raw.items():
         if value in (None, "", []):
             continue
@@ -270,6 +281,39 @@ def sanitize_patch(raw: dict, today: dt.date) -> dict:
 
 
 # ------------------------------------------------------------------ turn logic
+
+TYPES = {"birthday", "wedding", "house-warming", "community", "other"}
+TYPE_WORDS = {"house-warming": "house-warming", "community": "community event", "other": "celebration"}
+
+
+def summary_line(p: Profile, today: dt.date) -> str:
+    """The deterministic "what I understood" sentence, used when no model wrote one."""
+    kind = TYPE_WORDS.get(p.type, p.type)
+    who = re.split(r"[,—–:(]", p.who)[0].strip() if p.who else ""
+    parts = [f"A {kind}" + (f" for {who}" if who and not re.match(r"(?i)^(my|our)\b", who) else "")]
+    if p.guests:
+        parts.append(f"with about {p.guests} guests")
+    if p.area:
+        parts.append(f"in {p.area}")
+    if p.date:
+        parts.append(f"on {p.date.day} {p.date:%B}" + (f" {p.date.year}" if p.date.year != today.year else ""))
+    line = " ".join(parts)
+    if p.budget:
+        line += f", for {rules.inr(p.budget)} in all"
+    extras = [x for x in (p.food, p.access) if x and not re.search(r"(?i)\bno (special )?needs?\b|\bnone\b", x)]
+    if extras:
+        line += f"; planning around: {', '.join(e.lower() for e in extras)}"
+    if p.have:
+        line += f"; you already have {p.have.lower()}"
+    return clip(line + ".", 300)
+
+
+def first_insights(p: Profile, today: dt.date, limit: int = 3) -> list[Insight]:
+    """The rules' first reading of what is known (budget band, timing, season), most useful first."""
+    r = rules.evaluate(p, today)
+    order = {"budget": 0, "timing": 1, "season": 2, "size": 3, "needs": 4}
+    return sorted(r.insights, key=lambda i: order[i.family])[:limit]
+
 
 def _filled(p: Profile, f: str) -> bool:
     return getattr(p, f) not in (None, "")
@@ -333,9 +377,13 @@ async def chat_turn(inp: ChatIn, today: dt.date) -> ChatOut:
     else:
         ask = ask if ask in optional_left else optional_left[0]
 
+    model_line = clip(draft.understood, CAPS["reply"]) if result_source == "ai" and not inp.edit else ""
+    understood = {"understood": model_line or summary_line(merged, today),
+                  "understood_source": "ai" if model_line else "mock",
+                  "insights": [] if block else first_insights(merged, today)}
     if ask is None and not block:
         reply = clip(draft.reply, CAPS["reply"]) if draft.done and draft.reply else "That's everything I need."
-        return ChatOut(done=True, reply=reply, profile=merged, remaining=0, source=result_source)
+        return ChatOut(done=True, reply=reply, profile=merged, remaining=0, source=result_source, **understood)
 
     text, ph, chips = _question(ask, merged) if ask else ("", "", [])
     if ask and draft.ask == ask and draft.reply and not inp.edit:
@@ -343,4 +391,4 @@ async def chat_turn(inp: ChatIn, today: dt.date) -> ChatOut:
         chips = _clean_chips(draft.chips) or chips
     remaining = len(missing_req) + min(len(optional_left), max(0, MAX_TURNS - turns - len(missing_req)))
     return ChatOut(done=False, reply=text, ask=ask, placeholder=ph, chips=chips, profile=merged,
-                   block=block, remaining=max(1, remaining), source=result_source)
+                   block=block, remaining=max(1, remaining), source=result_source, **understood)

@@ -91,9 +91,10 @@ def screen_totals(p: Page, nav: str) -> tuple[str, dict]:
 def check_totals_match(r: Run, when: str) -> None:
     """Journey and My plan derive from one plan state, so their numbers must agree exactly."""
     p = r.page
+    d_line, _ = screen_totals(p, "Details")
     j_line, j_stops = screen_totals(p, "Journey")
-    p_line, p_stops = screen_totals(p, "My plan")
-    assert j_line == p_line, f"{when}: journey says {j_line!r}, My plan says {p_line!r}"
+    p_line, p_stops = screen_totals(p, "My plan")  # ends on My plan
+    assert j_line == p_line == d_line, f"{when}: journey {j_line!r}, My plan {p_line!r}, details {d_line!r}"
     assert j_stops == p_stops and j_stops, f"{when}: per-stop prices differ {j_stops} vs {p_stops}"
     assert sum(j_stops.values()) == int(re.sub(r"\D", "", j_line.split(" of ")[0])), f"{when}: total != sum of stops"
     print(f"  totals match ({when}):", j_line)
@@ -125,11 +126,21 @@ def flow(r: Run, dark: bool) -> None:
         ready.first.click()
         p.wait_for_timeout(300)
     expect(done).to_be_visible(timeout=40000)
-    r.step("edit a chip on the event card")
-    p.locator(".echip", has_text="guests").click()
+    r.step("details page: what I understood, first insights, grouped fields")
+    expect(p.locator(".details h1")).to_contain_text("22nd")
+    expect(p.locator(".under blockquote")).to_contain_text("30 guests")
+    expect(p.locator(".dins li").first).to_contain_text("a guest")
+    expect(p.locator(".dgroup")).to_have_count(7)
+    r.step("edit a field on the details page")
+    p.click("#ed-guests")
     p.fill("#ed-in", "32")
     p.press("#ed-in", "Enter")
-    expect(p.locator(".evchips")).to_contain_text("32 guests", timeout=20000)
+    expect(p.locator(".dfields")).to_contain_text("32 guests", timeout=20000)
+    expect(p.locator(".under blockquote")).to_contain_text("32 guests")
+    p.click("#ed-have")
+    p.fill("#ed-in", "Our own speaker")
+    p.press("#ed-in", "Enter")
+    expect(p.locator(".dfields")).to_contain_text("Our own speaker", timeout=20000)
     r.shot("chat-done" + suffix)
 
     r.step("start the journey → plan, with the working-on-it overlay")

@@ -98,3 +98,28 @@ def test_editing_a_chip_never_calls_the_model(monkeypatch):
     monkeypatch.setattr(intake.llm, "ask", boom)
     out = run(intake.ChatIn(profile=Profile(guests=30), message="45", asked="guests", edit=True))
     assert out.profile.guests == 45
+
+
+def test_summary_line_reads_like_a_sentence(aditya):
+    line = intake.summary_line(aditya.model_copy(update={"have": "A family priest"}), TODAY)
+    assert line.startswith("A birthday for Aditya with about 30 guests in Gachibowli, Hyderabad on 15 November")
+    assert "₹40,000" in line and "veg + 2 jain guests" in line and "a family priest" in line
+    assert line.endswith(".")
+
+
+def test_first_insights_lead_with_the_budget(aditya):
+    ins = intake.first_insights(aditya, TODAY)
+    assert ins[0].family == "budget" and "a guest" in ins[0].why and len(ins) == 3
+
+
+def test_chat_out_carries_understood_and_insights():
+    out = asyncio.run(intake.chat_turn(intake.ChatIn(message="A house-warming for 40 people, ₹50k, in Pune on 6 Dec"),
+                                       TODAY))
+    assert out.understood.startswith("A house-warming with about 40 guests in Pune")
+    assert out.understood_source == "mock" and out.insights and out.insights[0].family == "budget"
+
+
+def test_editing_what_you_already_have_makes_no_question(aditya):
+    out = asyncio.run(intake.chat_turn(intake.ChatIn(profile=aditya, message="Our family priest", asked="have",
+                                                     edit=True), TODAY))
+    assert out.profile.have == "Our family priest" and "our family priest" in out.understood
