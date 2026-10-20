@@ -8,9 +8,9 @@ and clamps, so a chatty model can never break the response contract.
 from __future__ import annotations
 
 import datetime as dt
-from typing import Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
 
 EventType = Literal["birthday", "wedding", "house-warming", "community", "other"]
 Source = Literal["ai", "mock", "fallback"]
@@ -113,6 +113,7 @@ class Option(BaseModel):
     reason: str = ""
     why: str = ""
     place_id: str | None = None
+    where: str | None = None
     dist_km: float | None = None
     ripple: list[Ripple] = []
     photo: PhotoHint | None = None
@@ -145,6 +146,7 @@ class Day(BaseModel):
 class Task(BaseModel):
     id: str
     stop: str | None = None
+    verb: str = ""
     text: str
     why: str = ""
     due: dt.date | None = None
@@ -169,3 +171,80 @@ class Plan(BaseModel):
     today: dt.date
     area_point: Point | None = None
     notes: list[str] = []
+
+
+# ---------- model drafts ----------
+# What the model is asked to return. Every field is lenient (wrong types become blanks)
+# because the planner validates and repairs each value before building a Plan.
+
+def _text(v: object) -> str:
+    return "" if v is None or isinstance(v, (dict, list)) else str(v)
+
+
+def _flag(v: object) -> bool:
+    return v is True or str(v).strip().lower() in ("true", "yes", "1")
+
+
+def _objects(v: object) -> list:
+    return [x for x in v if isinstance(x, (dict, BaseModel))] if isinstance(v, list) else []
+
+
+Text = Annotated[str, BeforeValidator(_text)]
+Flag = Annotated[bool, BeforeValidator(_flag)]
+
+
+class Lenient(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+
+class DraftRipple(Lenient):
+    stop: Text = ""
+    note: Text = ""
+    extra: Any = 0
+
+
+class DraftOption(Lenient):
+    kind: Text = ""
+    name: Text = ""
+    price: Any = None
+    place_id: Text = ""
+    reason: Text = ""
+    why: Text = ""
+    outdoor: Flag = False
+    photo_query: Text = ""
+    ripple: DraftRipple | None = None
+
+    @field_validator("ripple", mode="before")
+    @classmethod
+    def _ripple(cls, v: object) -> object:
+        return v if isinstance(v, (dict, BaseModel)) else None
+
+
+class DraftStop(Lenient):
+    key: Text = ""
+    pick: DraftOption = DraftOption()
+
+    @field_validator("pick", mode="before")
+    @classmethod
+    def _pick(cls, v: object) -> object:
+        return v if isinstance(v, (dict, BaseModel)) else {}
+    options: Annotated[list[DraftOption], BeforeValidator(_objects)] = []
+
+
+class DraftDayItem(Lenient):
+    time: Text = ""
+    title: Text = ""
+    note: Text = ""
+    art: Text = "arrive"
+
+
+class DraftDay(Lenient):
+    label: Text = ""
+    title: Text = ""
+    items: Annotated[list[DraftDayItem], BeforeValidator(_objects)] = []
+
+
+class DraftPlan(Lenient):
+    stops: Annotated[list[DraftStop], BeforeValidator(_objects)] = []
+    days: Annotated[list[DraftDay], BeforeValidator(_objects)] = []
+    invite: Text = ""
