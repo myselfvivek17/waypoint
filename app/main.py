@@ -20,6 +20,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -130,6 +131,7 @@ class RateLimiter:
 
 limiter = RateLimiter()
 app = FastAPI(title="Waypoint", docs_url=None, redoc_url=None, openapi_url=None)
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 app.add_middleware(Guard)
 
 

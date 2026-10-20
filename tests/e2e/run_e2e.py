@@ -92,14 +92,16 @@ def flow(r: Run, dark: bool) -> None:
     expect(p.locator("#q-h")).to_be_visible(timeout=40000)
     expect(p.locator(".evchips")).to_contain_text("30 guests")
     r.shot("chat" + suffix)
-    p.locator(".chips .chip").first.click()            # answer "who" with a chip
-    expect(p.locator(".tq")).to_have_count(2, timeout=40000)
-    for _ in range(4):                                  # answer until done
-        if p.locator("#view >> text=That's everything I need.").count():
+    done = p.locator("#view >> text=That's everything I need.")
+    ready = p.locator(".chips .chip:not([disabled])")
+    for _ in range(8):                                  # answer with chips until the AI is done
+        expect(p.locator("#q-h")).to_be_visible(timeout=40000)
+        expect(p.locator("#view button[disabled]")).to_have_count(0, timeout=40000)
+        if done.count():
             break
-        p.locator(".chips .chip").first.click()
-        p.wait_for_timeout(600)
-    expect(p.locator("#view >> text=That's everything I need.")).to_be_visible(timeout=40000)
+        ready.first.click()
+        p.wait_for_timeout(300)
+    expect(done).to_be_visible(timeout=40000)
     r.step("edit a chip on the event card")
     p.locator(".echip", has_text="guests").click()
     p.fill("#ed-in", "32")
@@ -230,7 +232,7 @@ def run_axe(browser, axe_path: Path, shots: Path) -> list:
         page.goto(BASE + "/")
         page.click("#view >> text=Aditya's 22nd birthday")
         page.wait_for_selector("#prop-h", timeout=160000)
-        for route in ("journey", "day", "plan", "welcome"):
+        for route in ("journey", "day", "plan", "chat", "welcome"):
             page.evaluate(f"location.hash = '{route}'")
             page.wait_for_timeout(900)
             page.add_script_tag(content=src)
@@ -240,10 +242,12 @@ def run_axe(browser, axe_path: Path, shots: Path) -> list:
         page.evaluate("location.hash = 'journey'")
         page.wait_for_timeout(600)
         page.click("#opt-btn")
+        page.wait_for_timeout(900)  # let the slide-in finish; mid-fade colours are not the real ones
         page.add_script_tag(content=src)
         res = page.evaluate("axe.run(document, {resultTypes: ['violations']})")
         for v in res["violations"]:
-            results.append((theme, "sheet", v["impact"], v["id"], len(v["nodes"]), v["help"]))
+            results.append((theme, "sheet", v["impact"], v["id"], len(v["nodes"]), v["help"],
+                            [(n["target"], n.get("failureSummary", "")[-120:]) for n in v["nodes"][:4]]))
     ctx.close()
     return results
 
@@ -262,7 +266,7 @@ def main() -> int:
     try:
         with sync_playwright() as pw:
             browser = pw.chromium.launch(executable_path=args.chrome or None, headless=True)
-            for dark in (False, True):
+            for dark in (() if os.getenv("WP_E2E_AXE_ONLY") else (False, True)):
                 ctx = browser.new_context(viewport={"width": 1280, "height": 900}, accept_downloads=True,
                                           color_scheme="light")
                 ctx.grant_permissions(["clipboard-read", "clipboard-write"], origin=BASE)

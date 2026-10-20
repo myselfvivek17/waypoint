@@ -185,3 +185,9 @@ def test_plan_without_ai_is_labelled_fallback(no_places, aditya, monkeypatch):
     monkeypatch.setattr(planner.llm, "ask", boom)
     r = client.post("/api/plan", json={"profile": aditya.model_dump(mode="json"), "ai": False})
     assert r.status_code == 200 and r.json()["source"] == "fallback"
+
+
+def test_static_assets_are_compressed_and_revalidated():
+    r = client.get("/css/app.css", headers={"accept-encoding": "gzip"})
+    assert r.status_code == 200 and r.headers.get("content-encoding") == "gzip"
+    assert r.headers["cache-control"] == "no-cache" and "etag" in r.headers
