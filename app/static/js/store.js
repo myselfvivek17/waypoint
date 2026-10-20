@@ -19,6 +19,7 @@ function initial() {
     welcomeDraft: '', draft: '', err: '', editing: null, editDraft: '', busy: false,
     sheet: false, why: false, change: false, changeDraft: '', changeMsg: '', slide: 0,
     planning: false, adjDraft: '', adjMsg: '', diff: null, inviteShown: false, online: navigator.onLine !== false,
+    demo: {}, serverToday: null, llmMode: null, photos: {}, nearby: {},
   };
 }
 
@@ -44,7 +45,7 @@ export function save() {
 }
 
 export function resetAll() {
-  const keep = { online: state.online };
+  const keep = { online: state.online, demo: state.demo, serverToday: state.serverToday, llmMode: state.llmMode };
   Object.assign(state, initial(), keep);
   try { localStorage.removeItem(KEY); } catch (e) { /* ignore */ }
 }

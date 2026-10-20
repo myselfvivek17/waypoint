@@ -186,3 +186,11 @@ def test_unverified_shop_name_on_other_stops_is_replaced(aditya, venue_set, pid,
 def test_real_shop_named_without_id_is_attached_as_where(aditya, venue_set):
     rec = next(s for s in _assemble(_cake_draft("", "City Bakers"), aditya, venue_set).stops if s.key == "cake").rec
     assert rec.place_id == "node/4" and rec.where == "City Bakers" and "cake" in rec.name.lower()
+
+
+def test_loose_search_hits_are_filtered_by_title():
+    mk = lambda t: places.Photo(thumb="https://upload.wikimedia.org/x.jpg", title=t, author="a", licence="CC0",
+                                page="https://commons.wikimedia.org/", relation="inspiration")
+    rows = [mk("Avenue des Champs-Elysées, Paris"), mk("Cricket stadium at night"), mk("Fairy light garland")]
+    assert [p.title for p in places.relevant(rows, "fairy lights")] == ["Fairy light garland"]
+    assert [p.title for p in places.relevant(rows, "cricket stadium")] == ["Cricket stadium at night"]

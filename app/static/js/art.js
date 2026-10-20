@@ -90,7 +90,7 @@ export function landscape() {
   return [
     s('path', { class: 'hill1', d: 'M0 214 C140 160 265 232 445 188 S770 142 905 206 S1115 168 1200 196 V300 H0Z' }),
     s('path', { class: 'hill2', d: 'M0 252 C180 216 362 272 572 234 S920 216 1200 252 V300 H0Z' }),
-    s('circle', { class: 'sun', cx: 1090, cy: 64, r: 28 }),
+    s('circle', { class: 'sun', cx: 935, cy: 60, r: 26 }),
     stars.map(([cx, cy], i) => s('circle', { class: 'star', cx, cy, r: i % 2 ? 2 : 2.6 })),
     s('path', { class: 'wire', d: 'M0 14 C210 42 390 4 600 28 S980 8 1200 26' }),
     bulbs.map((cx, i) => s('circle', { class: 'bulb', cx, cy: [26, 24, 18, 24, 14, 20][i], r: 5 })),

@@ -385,6 +385,15 @@ def parse_imageinfo(payload: dict | None, relation: str, limit: int = 3) -> list
     return out
 
 
+def relevant(rows: list[Photo], query: str) -> list[Photo]:
+    """Keep search hits whose title shares a real word with the query (Commons search is loose)."""
+    words = [w for w in re.findall(r"\w+", query.lower()) if len(w) > 3]
+    if not words:
+        return rows
+    stems = {w[:-1] if w.endswith("s") else w for w in words}
+    return [p for p in rows if any(st in p.title.lower() for st in stems)]
+
+
 _II = {"prop": "imageinfo", "iiprop": "url|mime|extmetadata", "iiurlwidth": THUMB_WIDTH, "format": "json",
        "action": "query", "iiextmetadatafilter": "Artist|LicenseShortName|LicenseUrl"}
 
@@ -415,6 +424,7 @@ async def photos(hint: PhotoHint) -> list[Photo]:
     if not result and hint.query:
         payload = await _get_json(COMMONS, params={**_II, "generator": "search", "gsrnamespace": 6,
                                                    "gsrsearch": f"{hint.query} filetype:bitmap", "gsrlimit": 8})
-        result = parse_imageinfo(payload if isinstance(payload, dict) else None, "inspiration")
+        result = relevant(parse_imageinfo(payload if isinstance(payload, dict) else None, "inspiration", 8),
+                          hint.query)[:3]
     photo_cache.put(key, result, ttl=None if result else 900)
     return result

@@ -189,7 +189,8 @@ h1:focus-visible,h2:focus-visible{outline:3px solid var(--focus);outline-offset:
 .star{fill:var(--on-night);opacity:.55}.sun{fill:var(--mari)}.bulb{fill:var(--mari)}
 .wire{fill:none;stroke:var(--on-night);stroke-opacity:.3;stroke-width:2}
 .pbase{fill:none;stroke:var(--on-night);stroke-opacity:.5;stroke-width:3;stroke-dasharray:2 11;stroke-linecap:round}
-.pg{fill:none;stroke:var(--mari);stroke-width:5;stroke-linecap:round;stroke-dasharray:1;transition:stroke-dashoffset 1s cubic-bezier(.5,0,.2,1);animation:drawin 1.4s ease both}
+.pg{fill:none;stroke:var(--mari);stroke-width:5;stroke-linecap:round;stroke-dasharray:1;transition:stroke-dashoffset 1s cubic-bezier(.5,0,.2,1)}
+.pg.draw{animation:drawin 1.4s ease both}
 .porig{fill:var(--mari)}
 .node{position:absolute;width:48px;height:48px;margin:-24px 0 0 -24px;border-radius:50%;border:2.5px solid var(--on-night);background:var(--night);color:var(--on-night);cursor:pointer;padding:0;display:block;transition:background .4s,border-color .4s}
 .nb{font-weight:700;font-size:18px}
@@ -237,7 +238,7 @@ h1:focus-visible,h2:focus-visible{outline:3px solid var(--focus);outline-offset:
 /* proposal */
 .prop{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:36px;margin-top:28px;align-items:start}
 .fig{margin:0}
-.ph{width:100%;aspect-ratio:4/3;display:block;border-radius:20px;animation:fadein .5s ease both;background:var(--ph);object-fit:cover}
+.ph{width:100%;height:auto;aspect-ratio:4/3;display:block;border-radius:20px;animation:fadein .5s ease both;background:var(--ph);object-fit:cover}
 .fig figcaption{display:flex;justify-content:space-between;gap:4px 10px;flex-wrap:wrap;margin-top:8px;font-size:14px}
 .cap{font-weight:600}
 .credit{color:var(--muted)}
