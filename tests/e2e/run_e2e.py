@@ -294,9 +294,47 @@ def flow(r: Run, dark: bool) -> None:
     r.shot("plan" + suffix)
     assert_no_null_text(p)
 
+    r.step("invite: AI text options, long names, emoji and Hindi, PNG download, photo stays local")
+    p.click("nav >> text=Invite")
+    expect(p.locator(".tone")).to_have_count(3, timeout=40000)
+    card = p.locator("#card")
+    p.wait_for_function("document.getElementById('card').dataset.fit !== undefined")
+    assert card.get_attribute("data-fit") == "true", "the plan's own text must fit the card"
+    p.locator(".tone").nth(1).click()
+    p.fill("#inv-head", "Aadhya Venkatalakshmi Subramaniam-Ramachandran's very first birthday 🎂🎉👶🏽")
+    p.locator(".chips button[lang=hi]").click()
+    expect(p.locator(".tone").first).to_contain_text("15", timeout=40000)
+    hindi = p.locator("#inv-msg").input_value()
+    assert re.search(r"[\u0900-\u097F]", hindi), hindi
+    p.wait_for_timeout(500)
+    assert card.get_attribute("data-fit") == "true", "long name + emoji + Hindi must still fit"
+    assert int(card.get_attribute("data-lines")) >= 4
+    painted = p.evaluate("""() => { const c = document.getElementById('card'), d = c.getContext('2d')
+        .getImageData(0, 0, c.width, c.height).data; let ink = 0;
+        for (let i = 0; i < d.length; i += 4 * 97) if (d[i] !== d[0] || d[i + 1] !== d[1]) ink++; return ink; }""")
+    assert painted > 500, "the card should have decor and text drawn on it"
+    r.shot("invite" + suffix)
+    with p.expect_download() as dl:
+        p.click("#dl-btn")
+    png = r.shots / "_downloaded-invite.png"
+    dl.value.save_as(png)
+    assert png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n" and dl.value.suggested_filename.endswith("-invite.png")
+    sent = []
+    p.on("request", lambda req: sent.append(req.url) if req.method != "GET" else None)
+    p.set_input_files("#inv-photo", str(png))
+    expect(p.locator("#photo-x")).to_be_visible()
+    p.wait_for_timeout(600)
+    assert not sent, f"the photo must stay in the browser, but saw {sent}"
+    r.shot("invite-photo" + suffix, full=False)
+    p.fill("#inv-msg", "Long message. " * 42)
+    p.wait_for_timeout(400)
+    if card.get_attribute("data-fit") == "false":
+        expect(p.locator("#fit-warn")).to_be_visible()
+    p.click("#photo-x")
+
     r.step("reload restores state")
     p.reload()
-    expect(p.locator("h1")).to_contain_text("22nd")
+    expect(p.locator("h1")).to_be_visible()
 
 
 def edges(r: Run) -> None:

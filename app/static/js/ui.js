@@ -3,7 +3,7 @@ import { busyMotif } from './art.js';
 import { state, save } from './store.js';
 import { clear, reducedMotion } from './dom.js';
 
-export const ROUTES = ['welcome', 'chat', 'journey', 'day', 'plan'];
+export const ROUTES = ['welcome', 'chat', 'journey', 'day', 'plan', 'invite'];
 let renderFn = () => {};
 let toastTimer = 0;
 let busyTimer = 0, busyShow = 0, busyFrom = null;

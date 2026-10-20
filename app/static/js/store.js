@@ -5,7 +5,7 @@
    so the journey, the event day, My plan and the details page can never disagree. */
 
 const KEY = 'waypoint:v1';
-const DURABLE = ['route', 'profile', 'chat', 'plan', 'j', 'ticks', 'dayTab', 'planDirty'];
+const DURABLE = ['route', 'profile', 'chat', 'plan', 'j', 'ticks', 'dayTab', 'planDirty', 'inv'];
 
 export function freshJourney() {
   return { stopIdx: 0, decided: {}, chosen: {}, ripples: [], updated: {}, view: 'path', nearby: false, pin: null };
@@ -17,7 +17,7 @@ export function freshChat() {
 
 function initial() {
   return {
-    route: 'welcome', profile: {}, chat: freshChat(), plan: null, j: freshJourney(), ticks: {}, dayTab: 0,
+    route: 'welcome', profile: {}, chat: freshChat(), plan: null, j: freshJourney(), ticks: {}, dayTab: 0, inv: null,
     planDirty: false,
     // ephemeral
     welcomeDraft: '', draft: '', err: '', editing: null, editDraft: '', busy: false,

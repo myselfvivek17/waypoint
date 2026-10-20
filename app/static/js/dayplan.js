@@ -240,6 +240,7 @@ export function planView() {
     h('div', { class: 'acts' },
       h('button', { class: 'btn mari', type: 'button', onClick: () => addCal(rows) }, 'Add deadlines to calendar'),
       h('button', { class: 'btn', type: 'button', onClick: copyInvite }, 'Copy invite'),
+      h('button', { class: 'btn', type: 'button', onClick: () => go('invite') }, 'Design the invitation card'),
       h('button', { class: 'btn', type: 'button', onClick: () => window.print() }, 'Print')),
     state.inviteShown ? h('div', { class: 'inv', role: 'region', 'aria-label': 'Invite text' }, plan.invite) : null,
     plan.notes && plan.notes.length ? h('ul', { class: 'notes' }, plan.notes.map((t) => h('li', null, t))) : null);

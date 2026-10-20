@@ -4,11 +4,12 @@ import { moonIcon, sunIcon } from './art.js';
 import { dayView, planView } from './dayplan.js';
 import { $, clear, h } from './dom.js';
 import { chatView, startDemo, welcomeView } from './intake.js';
+import { inviteView } from './invite.js';
 import { journeyView, sheetView } from './journey.js';
 import { discardDetailEdits, load, resetAll, state } from './store.js';
 import { cancelTimers, go, onRender, ROUTES, stopThinking } from './ui.js';
 
-const NAV = [['chat', 'Details'], ['journey', 'Journey'], ['day', 'Event day'], ['plan', 'My plan']];
+const NAV = [['chat', 'Details'], ['journey', 'Journey'], ['day', 'Event day'], ['plan', 'My plan'], ['invite', 'Invite']];
 let shownRoute = null;
 
 // ------------------------------------------------------------------ theme
@@ -80,11 +81,11 @@ const FOCUS = {
 };
 
 function render(opts = {}) {
-  if (['journey', 'day', 'plan'].includes(state.route) && !state.plan) state.route = state.chat.reply ? 'chat' : 'welcome';
+  if (['journey', 'day', 'plan', 'invite'].includes(state.route) && !state.plan) state.route = state.chat.reply ? 'chat' : 'welcome';
   if (state.route === 'chat' && !state.chat.reply && !state.chat.done && !state.chat.block && !state.busy) state.route = 'welcome';
   const before = document.activeElement && document.activeElement.id;
   const view = $('#view');
-  const screen = { welcome: welcomeView, chat: chatView, journey: journeyView, day: dayView, plan: planView }[state.route];
+  const screen = { welcome: welcomeView, chat: chatView, journey: journeyView, day: dayView, plan: planView, invite: inviteView }[state.route];
   const node = screen(opts);
   const routeChanged = shownRoute !== state.route;
   if (routeChanged) node.classList.add('screen');

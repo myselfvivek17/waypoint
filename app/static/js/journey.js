@@ -634,7 +634,8 @@ function finale() {
       : `, with ${inr(b.budget - b.total)} of your budget still free.`)),
     h('div', { class: 'pact' },
       h('button', { class: 'btn mari', type: 'button', onClick: () => go('day') }, 'See the event day'),
-      h('button', { class: 'btn', type: 'button', onClick: () => go('plan') }, 'Open my plan')));
+      h('button', { class: 'btn', type: 'button', onClick: () => go('plan') }, 'Open my plan'),
+      h('button', { class: 'btn', type: 'button', onClick: () => go('invite') }, 'Make the invitation')));
 }
 
 /** Venue alternatives show real photos (the place's own, then similar vibe); others an illustration. */

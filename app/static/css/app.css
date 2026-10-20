@@ -425,9 +425,35 @@ h1:focus-visible,h2:focus-visible{outline:3px solid var(--focus);outline-offset:
 .inv{margin-top:14px;padding:14px;border-radius:14px;background:var(--paper);border:1.5px solid var(--line);white-space:pre-wrap}
 .notes{margin:18px 0 0;padding:0;list-style:none;color:var(--muted);font-size:14px;display:grid;gap:4px}
 
+/* ---------- invite ---------- */
+.invite{padding:36px 20px 100px}
+.invgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.05fr);gap:48px;align-items:start}
+.invprev{position:sticky;top:16px}
+.card{display:block;width:100%;height:auto;aspect-ratio:1080/1350;border-radius:20px;box-shadow:0 18px 40px rgba(22,32,42,.18);background:var(--ph)}
+.invprev .acts{margin-top:18px}
+.invctl{display:grid;gap:4px}
+.tones{list-style:none;margin:10px 0;padding:0;display:grid;gap:10px}
+.tone{width:100%;text-align:left;display:grid;gap:4px;padding:14px 16px;border-radius:16px;border:2px solid var(--line);background:var(--paper);cursor:pointer;font-size:16px;line-height:1.45}
+.tone .step{margin:0}
+.tone[aria-pressed="true"]{border-color:var(--mari);box-shadow:inset 4px 0 0 var(--mari)}
+.invrow{display:grid;gap:6px;margin-top:6px}
+.invrow .btn{justify-self:start;margin-top:6px}
+.invctl .cin{width:100%;min-height:48px;padding:10px 14px;border-radius:14px;border:2px solid var(--line);background:var(--paper)}
+.invctl .cin.area{resize:vertical;font:inherit;line-height:1.45}
+.invctl .dgroup .flab{display:block;margin-top:8px}
+.swatches{display:flex;flex-wrap:wrap;gap:10px;margin:8px 0 12px}
+.swatch{width:48px;height:48px;border-radius:50%;border:2px solid var(--line);cursor:pointer;padding:0}
+.swatch[aria-pressed="true"]{outline:3px solid var(--ink);outline-offset:3px}
+.photo{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
+.photo label.btn{display:inline-flex;align-items:center}
+.photo input:focus-visible+label{outline:3px solid var(--focus);outline-offset:3px}
+.photo .tt2{flex-basis:100%;margin:0}
+#print-card{display:none}
+
 /* ---------- responsive ---------- */
 @media (max-width:900px){
- .chatgrid,.plangrid,.prop,.dgrid{grid-template-columns:minmax(0,1fr);gap:28px}
+ .chatgrid,.plangrid,.prop,.dgrid,.invgrid{grid-template-columns:minmax(0,1fr);gap:28px}
+ .invprev{position:static}
  .evcard{position:static;order:-1}
 }
 @media (min-width:900px){
@@ -448,6 +474,9 @@ h1:focus-visible,h2:focus-visible{outline:3px solid var(--focus);outline-offset:
  body{font-size:16px}
 }
 @media print{
+ body.printing-card>*:not(#print-card){display:none!important}
+ body.printing-card #print-card{display:block}
+ body.printing-card #print-card img{width:100%;max-height:100vh;object-fit:contain}
  :root{--ink:#16202A;--cream:#fff;--paper:#fff;--sand:#eee;--line:#bbb;--muted:#333;--night:#fff;--on-night:#16202A;--night-step:#9A4A0C}
  .hd,.acts,.busy,.toast,.chg,.jbar,.offb,.skip,.adjust,.next .btn,.sheetwrap{display:none!important}
  .plangrid{grid-template-columns:1fr 1fr;gap:24px}
