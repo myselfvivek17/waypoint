@@ -38,6 +38,11 @@ NO_PHOTO = {
     "day": "A run-sheet has nothing to photograph. You'll see it on the event-day screen.",
 }
 PLACE_WAIT = float(os.getenv("WP_PLACES_WAIT", "50"))
+# Openverse phrases for "similar vibe" photos of a kind of place.
+VIBE = {"cafe": "cafe interior", "restaurant": "restaurant interior", "events_venue": "event hall party",
+        "community_centre": "community hall event", "conference_centre": "convention hall",
+        "banquet_hall": "banquet hall", "park": "park picnic", "garden": "garden party", "hotel": "hotel banquet hall",
+        "resort": "resort lawn party"}
 # Words that make a name look like a specific business; such names need a verified place id.
 BUSINESS = re.compile(r"(?i)\b(bakery|bakers|bakehouse|patisserie|caterers?|catering co|sweets|mithai(?:wala)?|"
                       r"restaurant|caf[eé]|dhaba|hotel|banquets?|studios?|pvt|ltd|& sons|enterprises)\b")
@@ -153,12 +158,11 @@ def make_option(d: DraftOption, *, key: str, oid: str, kind: str, p: Profile, ps
         name = clip(fallback.name, CAPS["name"]) or "To be decided"
     photo: PhotoHint | None = None
     if key == "venue":
-        if place is not None and place.photo is not None:
-            photo = place.photo
-        elif place is not None:
-            photo = PhotoHint(lat=place.lat, lon=place.lon, relation="near")
-        elif ps.center is not None:
-            photo = PhotoHint(lat=ps.center.lat, lon=ps.center.lon, relation="near")
+        if place is not None:  # its own photos first, then openly licensed photos of similar places
+            photo = (place.photo or PhotoHint()).model_copy(update={
+                "lat": place.lat, "lon": place.lon, "name": place.name, "vibe": VIBE.get(place.kind), "relation": "place"})
+        else:
+            photo = PhotoHint(vibe=generic_vibe(p, name))
     elif key not in NO_PHOTO:
         q = _query(d.photo_query) or _query(fallback.photo_query)
         photo = PhotoHint(query=q, relation="inspiration") if q else None
@@ -178,6 +182,18 @@ def make_option(d: DraftOption, *, key: str, oid: str, kind: str, p: Profile, ps
         lat=place.lat if place else None, lon=place.lon if place else None,
         photo=photo, tone=_tone(oid + name),
     )
+
+
+def generic_vibe(p: Profile, name: str) -> str:
+    """A photo phrase for a venue that is described, not named (no verified place)."""
+    low = name.lower()
+    for word, phrase in (("home", "housewarming party home"), ("terrace", "rooftop terrace party"),
+                         ("garden", "garden party"), ("lawn", "wedding lawn"), ("clubhouse", "clubhouse party"),
+                         ("café", "cafe interior"), ("cafe", "cafe interior"), ("restaurant", "restaurant interior"),
+                         ("hall", "banquet hall")):
+        if word in low:
+            return phrase
+    return "banquet hall" if (p.guests or 0) > 40 else "restaurant interior"
 
 
 def _ripples(d: DraftOption, later: set[str], budget: int) -> list[Ripple]:

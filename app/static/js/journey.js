@@ -8,13 +8,28 @@ import { allOptions, budgetLine, lineTotal, maxReach, nextIndex, stopsModel, sum
 import { chooseOption, confirmStop, state } from './store.js';
 import { announce, go, later, rerender, say, update } from './ui.js';
 
-const PHOTO_HOSTS = ['upload.wikimedia.org'];
-const PAGE_HOSTS = ['commons.wikimedia.org'];
+const PHOTO_HOSTS = ['upload.wikimedia.org', 'api.openverse.org', 'fastly.4sqi.net'];
+const PAGE_HOSTS = ['commons.wikimedia.org', 'openverse.org', 'foursquare.com'];
 const RELATION = {
   place: 'Photo of this place',
   near: 'Taken near this place, not the place itself',
+  similar: 'Similar vibe · not this venue',
   inspiration: 'Inspiration photo, not the actual item',
 };
+const SOURCE = { wikimedia: 'Wikimedia Commons', openverse: 'Openverse', foursquare: 'Foursquare' };
+
+/** The OpenStreetMap page of a real place ("node/123"), or null for a described venue. */
+export function osmUrl(placeId) {
+  return /^(node|way|relation)\/\d{1,15}$/.test(placeId || '') ? 'https://www.openstreetmap.org/' + placeId : null;
+}
+
+function credit(p) {
+  const page = safeUrl(p.page, PAGE_HOSTS);
+  const src = SOURCE[p.source] || 'source';
+  return h('span', { class: 'credit' }, 'Photo: ', p.author, ' · ',
+    page ? h('a', { href: page, target: '_blank', rel: 'noopener noreferrer' }, p.licence, h('span', { class: 'sr' }, ` (opens ${src})`)) : p.licence,
+    ' · ', src);
+}
 const LEVEL = { info: 'Note', warn: 'Heads-up', block: 'Blocker' };
 const PIN_KIND = { food: ['F', 'Food'], park: ['P', 'Parking'], stay: ['S', 'Stay'] };
 
@@ -150,6 +165,11 @@ function photosFor(item, key) {
     });
   }
   return state.photos[k];
+}
+
+/** The short name of the area being planned around ("Gachibowli"). */
+export function areaName() {
+  return ((state.plan && state.plan.profile.area) || 'the area').split(',')[0].trim();
 }
 
 function venuePoint(m) {
@@ -349,21 +369,20 @@ function photoBlock(cur) {
       : "I couldn't find a real photo for this idea. I'd rather show nothing than something that isn't real.");
   }
   const n = photos.length, k = ((state.slide % n) + n) % n, p = photos[k];
-  const page = safeUrl(p.page, PAGE_HOSTS);
   return h('div', { role: 'group', 'aria-roledescription': 'carousel', 'aria-label': 'Photos for ' + it.name },
     h('figure', { class: 'fig' },
-      h('span', { class: 'rel' }, RELATION[p.relation] || RELATION.inspiration),
-      h('img', { class: 'ph', src: safeUrl(p.thumb, PHOTO_HOSTS), alt: p.title || it.name, decoding: 'async',
-        referrerpolicy: 'no-referrer', width: 960, height: 720,
+      h('span', { class: 'rel' + (p.relation === 'place' ? ' own' : '') }, RELATION[p.relation] || RELATION.inspiration),
+      h('img', { class: 'ph', src: safeUrl(p.thumb, PHOTO_HOSTS), alt: (p.relation === 'similar' ? 'Similar place, not this venue: ' : '') + (p.title || it.name),
+        decoding: 'async', referrerpolicy: 'no-referrer', width: 960, height: 720,
         onError: () => { p.failed = true; rerender(); } }),
-      h('figcaption', null, h('span', { class: 'cap' }, p.title),
-        h('span', { class: 'credit' }, 'Photo: ', p.author, ' · ',
-          page ? h('a', { href: page, target: '_blank', rel: 'noopener noreferrer' }, p.licence, h('span', { class: 'sr' }, ' (opens Wikimedia Commons)')) : p.licence))),
-    n > 1 ? h('div', { class: 'cctl' },
-      h('button', { class: 'cbtn', type: 'button', 'aria-label': 'Previous photo', onClick: () => update({ slide: state.slide + n - 1 }) }, '‹'),
-      photos.map((_, i) => h('button', { class: 'dot', type: 'button', 'aria-label': `Photo ${i + 1} of ${n}`,
-        'aria-current': i === k ? 'true' : 'false', onClick: () => update({ slide: i }) }, h('span'))),
-      h('button', { class: 'cbtn', type: 'button', 'aria-label': 'Next photo', onClick: () => update({ slide: state.slide + 1 }) }, '›')) : null);
+      h('figcaption', null, h('span', { class: 'cap' }, p.title), credit(p))),
+    n > 1 ? h('ul', { class: 'pstrip', 'aria-label': 'All photos' }, photos.map((ph, i) => h('li', null,
+      h('button', { class: 'pthumb', type: 'button', 'aria-current': i === k ? 'true' : 'false',
+        'aria-label': `Photo ${i + 1} of ${n}: ${RELATION[ph.relation] || RELATION.inspiration}`, onClick: () => update({ slide: i }) },
+      h('img', { src: safeUrl(ph.thumb, PHOTO_HOSTS), alt: '', loading: 'lazy', decoding: 'async', referrerpolicy: 'no-referrer',
+        width: 96, height: 72, onError: () => { ph.failed = true; rerender(); } }),
+      h('span', { class: 'ptag' + (ph.relation === 'place' ? ' own' : ''), 'aria-hidden': 'true' },
+        ph.relation === 'place' ? 'This place' : ph.relation === 'similar' ? 'Similar vibe' : 'Idea'))))) : null);
 }
 
 function proposal(m, idx) {
@@ -372,8 +391,9 @@ function proposal(m, idx) {
   const ai = state.plan.source === 'ai';
   const unit = it.per_guest ? `${inr(it.price)} a guest × ${guests}`
     : cur.extra ? `includes ${cur.extra > 0 ? '+' : '−'}${inr(Math.abs(cur.extra))} from earlier choices` : '';
-  const where = it.where ? `From ${it.where}${it.dist_km != null ? `, ${it.dist_km} km away` : ''}`
-    : it.dist_km != null ? `${it.dist_km} km from the centre of ${(p.area || '').split(',')[0]}` : '';
+  const where = it.where ? `From ${it.where}${it.dist_km != null ? `, ${it.dist_km} km from ${areaName()}` : ''}`
+    : it.dist_km != null ? `${it.dist_km} km from ${areaName()}` : '';
+  const osm = st.key === 'venue' ? osmUrl(it.place_id) : null;
   const kinds = [...new Set(st.options.map((o) => o.kind))];
   return h('section', { class: 'prop', 'aria-labelledby': 'prop-h' },
     photoBlock(cur),
@@ -382,7 +402,8 @@ function proposal(m, idx) {
         h('span', { class: 'aitag' + (ai ? ' ai' : '') }, ai ? 'Proposed by AI · checked by rules' : 'Rule-based suggestion')),
       cur.flag ? h('p', { class: 'upd' }, 'Updated: ' + cur.flag.note) : null,
       h('h2', { id: 'prop-h', class: 'disp ph2', tabindex: '-1' }, it.name),
-      where ? h('p', { class: 'pwhere' }, where) : null,
+      where || osm ? h('p', { class: 'pwhere' }, where, where && osm ? ' · ' : '',
+        osm ? h('a', { href: osm, target: '_blank', rel: 'noopener noreferrer' }, 'Open in OpenStreetMap', h('span', { class: 'sr' }, ' (new tab)')) : null) : null,
       h('p', { class: 'pprice' }, inr(cur.price), unit ? h('span', null, unit) : null),
       it.cap && it.cap < guests ? h('p', { class: 'err' }, `Fits about ${it.cap}, fewer than your ${guests} guests.`) : null,
       h('p', { class: 'preason' }, it.reason),
@@ -423,10 +444,28 @@ function finale() {
       h('button', { class: 'btn', type: 'button', onClick: () => go('plan') }, 'Open my plan')));
 }
 
+/** Venue alternatives show real photos (the place's own, then similar vibe); others an illustration. */
+function altPhoto(o, key, i) {
+  const res = key === 'venue' && o.photo ? photosFor(o, key) : null;
+  const photos = res && res.status === 'done' ? res.photos.filter((p) => safeUrl(p.thumb, PHOTO_HOSTS) && !p.failed) : [];
+  if (!photos.length) return toneArt(o.tone, i % 3, { role: 'img', 'aria-label': 'Illustration, not a photo' });
+  const p = photos[0];
+  return h('figure', { class: 'altfig' },
+    h('img', { src: safeUrl(p.thumb, PHOTO_HOSTS), alt: (p.relation === 'similar' ? 'Similar place, not this venue: ' : '') + p.title,
+      loading: 'lazy', decoding: 'async', referrerpolicy: 'no-referrer', width: 240, height: 180,
+      onError: () => { p.failed = true; rerender(); } }),
+    h('figcaption', null, h('span', { class: 'ptag' + (p.relation === 'place' ? ' own' : '') },
+      p.relation === 'place' ? 'This place' : 'Similar vibe · not this venue'), credit(p)));
+}
+
+let sheetFor = null;  // the stop the open sheet belongs to: re-renders (photos arriving) must not replay its entrance
+
 export function sheetView() {
-  if (!state.sheet || state.route !== 'journey' || !state.plan) return null;
+  if (!state.sheet || state.route !== 'journey' || !state.plan) { sheetFor = null; return null; }
   const m = stopsModel(state), idx = current(m), cur = m[idx];
-  if (!cur) return null;
+  if (!cur) { sheetFor = null; return null; }
+  const again = sheetFor === cur.key;
+  sheetFor = cur.key;
   const guests = state.plan.profile.guests || 0;
   const close = () => update({ sheet: false }, { focus: 'opt-btn' });
   const alts = allOptions(cur.s).filter((o) => o.id !== cur.item.id).map((o, i) => {
@@ -436,17 +475,20 @@ export function sheetView() {
       const lab = (state.plan.stops.find((x) => x.key === r.stop) || {}).label || r.stop;
       return `${lab}: ${r.note}${r.extra ? ` (${r.extra > 0 ? '+' : '−'}${inr(Math.abs(r.extra))})` : ''}`;
     });
+    const osm = cur.key === 'venue' ? osmUrl(o.place_id) : null;
     return h('li', { class: 'alt' },
-      toneArt(o.tone, i % 3, { role: 'img', 'aria-label': 'Illustration, not a photo' }),
+      altPhoto(o, cur.key, i),
       h('div', null,
         h('p', { class: 'step', style: { margin: '0' } }, o.id === cur.s.rec.id ? 'My first suggestion' : o.kind),
         h('b', null, o.name),
-        o.where || o.dist_km != null ? h('p', { class: 'tt2' }, o.where ? 'From ' + o.where : `${o.dist_km} km away`) : null,
+        o.where || o.dist_km != null || osm ? h('p', { class: 'tt2' },
+          o.where ? 'From ' + o.where : o.dist_km != null ? `${o.dist_km} km from ${areaName()}` : '',
+          osm ? [' · ', h('a', { href: osm, target: '_blank', rel: 'noopener noreferrer' }, 'OpenStreetMap', h('span', { class: 'sr' }, ` page for ${o.name} (new tab)`))] : null) : null,
         h('p', { class: 'altp' }, inr(price), ' ',
           h('span', { class: d > 0 ? 'more' : d < 0 ? 'less' : '' }, '· ' + (d === 0 ? 'same price' : d > 0 ? inr(d) + ' more' : inr(-d) + ' less'))),
         h('p', { class: 'altr' }, small ? `Too small for ${guests} guests (fits ${o.cap}).` : o.reason),
         rip.length ? h('p', { class: 'altrip' }, 'Also changes ' + rip.join('; ')) : null,
-        h('button', { class: 'btn', type: 'button', disabled: !!small, onClick: () => pick(cur.s, o) },
+        h('button', { class: 'btn', id: 'alt-' + o.id, type: 'button', disabled: !!small, onClick: () => pick(cur.s, o) },
           small ? 'Not big enough' : 'Choose this', h('span', { class: 'sr' }, ': ' + o.name))));
   });
   const trap = (e) => {
@@ -457,7 +499,7 @@ export function sheetView() {
     if (e.shiftKey && document.activeElement === f[0]) { e.preventDefault(); f[f.length - 1].focus(); }
     else if (!e.shiftKey && document.activeElement === f[f.length - 1]) { e.preventDefault(); f[0].focus(); }
   };
-  return h('div', { class: 'sheetwrap' },
+  return h('div', { class: 'sheetwrap' + (again ? ' again' : '') },
     h('button', { class: 'scrim', type: 'button', tabindex: '-1', 'aria-label': 'Close options', onClick: close }),
     h('div', { id: 'sheet', class: 'sheet', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'sheet-h', tabindex: '-1', onKeydown: trap },
       h('div', { class: 'sheethd' },

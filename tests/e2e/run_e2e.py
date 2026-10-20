@@ -161,6 +161,23 @@ def flow(r: Run, dark: bool) -> None:
     expect(p.locator(".node")).to_have_count(6)
     r.shot("journey" + suffix)
 
+    r.step("venue card: distance from the area, OpenStreetMap link, labelled photos")
+    p.wait_for_selector(".prop .fig, .prop .nophoto", timeout=40000)
+    where = p.locator(".pwhere")
+    if where.count():
+        expect(where).to_contain_text("km from Gachibowli")
+        link = where.locator("a")
+        if link.count():
+            assert link.get_attribute("href").startswith("https://www.openstreetmap.org/")
+    if p.locator(".prop .fig").count():
+        label = p.locator(".prop .rel").inner_text()
+        assert label in ("Photo of this place", "Similar vibe · not this venue"), label
+        expect(p.locator(".prop .credit").first).to_contain_text("Photo: ")
+        tags = p.locator(".pstrip .ptag").all_inner_texts()
+        print("  photo strip:", tags)
+        assert all(t in ("This place", "Similar vibe") for t in tags)
+    r.shot("venue-card" + suffix, full=False)
+
     r.step("Why? reveals the rule")
     p.click("#view >> text=Why?")
     expect(p.locator("#why")).to_contain_text("The rule behind it")

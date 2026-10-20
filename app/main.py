@@ -36,8 +36,12 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 log = logging.getLogger("waypoint")
 
 MAX_BODY = 64 * 1024
+# Photos load straight from Wikimedia and the Openverse thumbnail proxy (and Foursquare's image host
+# only when a Foursquare key is configured); everything else is same-origin.
+IMG_HOSTS = "https://upload.wikimedia.org https://api.openverse.org" + (
+    " https://fastly.4sqi.net" if os.getenv("FOURSQUARE_API_KEY", "").strip() else "")
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; "
-       "img-src 'self' data: https://upload.wikimedia.org; connect-src 'self'; object-src 'none'; "
+       f"img-src 'self' data: blob: {IMG_HOSTS}; connect-src 'self'; object-src 'none'; "
        "base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
 SECURITY_HEADERS = {
     "Content-Security-Policy": CSP,
@@ -221,23 +225,28 @@ async def get_places(request: Request, area: str | None = Query(None, min_length
 
 FILE_RE = re.compile(r"^File:[^/\\<>#?|{}\[\]]{1,200}\.(?:jpe?g|png|webp)$", re.I)
 QUERY_RE = re.compile(r"^[\w\s,'-]{2,80}$", re.UNICODE)
+NAME_RE = re.compile(r"^[^<>{}\[\]\\|`]{1,80}$")
 
 
 @app.get("/api/photo")
 async def photo(request: Request, file: str | None = Query(None, max_length=210),
                 wikidata: str | None = Query(None, pattern=r"^Q\d{1,12}$"),
                 lat: float | None = Query(None, ge=-90, le=90), lon: float | None = Query(None, ge=-180, le=180),
-                q: str | None = Query(None, max_length=80)) -> dict:
-    """Real photos with attribution for a Commons file, a Wikidata item, a point or a phrase."""
+                q: str | None = Query(None, max_length=80), name: str | None = Query(None, max_length=80),
+                vibe: str | None = Query(None, max_length=80)) -> dict:
+    """Credited photos: of a place (Commons file, Wikidata item, name + point), near a point,
+    of similar places (``vibe``, always labelled as not this place), or of an idea (``q``)."""
     limiter.check(request, "places")
     if file is not None and not FILE_RE.match(file):
         raise HTTPException(422, "That file name is not allowed.")
-    if q is not None and not QUERY_RE.match(q):
+    if any(x is not None and not QUERY_RE.match(x) for x in (q, vibe)):
         raise HTTPException(422, "That search is not allowed.")
-    if not (file or wikidata or q or (lat is not None and lon is not None)):
+    if name is not None and not NAME_RE.match(name):
+        raise HTTPException(422, "That name is not allowed.")
+    if not (file or wikidata or q or vibe or (lat is not None and lon is not None)):
         raise HTTPException(422, "Nothing to look up.")
-    relation = "place" if (file or wikidata) else "near" if lat is not None else "inspiration"
-    hint = PhotoHint(file=file, wikidata=wikidata, lat=lat, lon=lon, query=q, relation=relation)
+    relation = "place" if (file or wikidata or name) else "near" if lat is not None else "inspiration"
+    hint = PhotoHint(file=file, wikidata=wikidata, lat=lat, lon=lon, name=name, vibe=vibe, query=q, relation=relation)
     return {"photos": [p.model_dump() for p in await places.photos(hint)]}
 
 

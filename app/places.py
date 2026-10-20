@@ -2,7 +2,9 @@
 
 * Nominatim geocodes the area the user typed.
 * Overpass finds named venues, cafés, halls, parks, bakeries, parking and stays nearby.
-* Wikimedia Commons / Wikidata supply photos, always with author and licence.
+* Wikimedia Commons / Wikidata supply photos of the place itself, always with author and licence.
+* Foursquare (optional, only with ``FOURSQUARE_API_KEY``) adds real photos of the venue.
+* Openverse supplies openly licensed "similar vibe" photos, which are never presented as the venue.
 
 Every call has a timeout, a per-host rate limit, an in-memory cache and a graceful empty
 result, so a slow or missing service never breaks planning. Nothing here invents a place.
@@ -38,6 +40,11 @@ OVERPASS = (
 OVERPASS_TIMEOUT = float(os.getenv("WP_OVERPASS_TIMEOUT", "45"))
 COMMONS = "https://commons.wikimedia.org/w/api.php"
 WIKIDATA = "https://www.wikidata.org/w/api.php"
+OPENVERSE = "https://api.openverse.org/v1/images/"
+OPENVERSE_HOST = "api.openverse.org"
+FSQ_API = "https://places-api.foursquare.com"
+FSQ_VERSION = "2025-06-17"
+FSQ_IMAGE_HOST = "fastly.4sqi.net"
 IMAGE_HOST = "upload.wikimedia.org"
 # Commons may hand out thumbnails on thumb.wikimedia.org; the same path is served by IMAGE_HOST.
 THUMB_HOSTS = {IMAGE_HOST, "thumb.wikimedia.org"}
@@ -45,7 +52,8 @@ THUMB_WIDTH = 960  # Wikimedia only renders a fixed set of standard widths
 
 # Minimum seconds between two requests to the same host (Nominatim policy: 1/s).
 MIN_GAP = {"nominatim.openstreetmap.org": 1.0, "overpass-api.de": 1.0, "lz4.overpass-api.de": 1.0,
-           "z.overpass-api.de": 1.0, "commons.wikimedia.org": 0.1, "www.wikidata.org": 0.1}
+           "z.overpass-api.de": 1.0, "commons.wikimedia.org": 0.1, "www.wikidata.org": 0.1,
+           "api.openverse.org": 3.1, "places-api.foursquare.com": 0.2}  # Openverse: 20/min without a key
 
 LABELS = {
     "cafe": "Café", "restaurant": "Restaurant", "events_venue": "Event venue",
@@ -90,7 +98,8 @@ class Photo(BaseModel):
     licence: str
     licence_url: str | None = None
     page: str
-    relation: str
+    relation: str  # place | near | inspiration | similar
+    source: str = "wikimedia"  # wikimedia | foursquare | openverse
 
 
 class PlaceSet(BaseModel):
@@ -129,7 +138,7 @@ _locks: dict[str, asyncio.Lock] = {}
 
 
 async def _get_json(url: str, *, params: dict | None = None, data: dict | None = None,
-                    timeout: float = 10.0) -> dict | list | None:
+                    timeout: float = 10.0, headers: dict | None = None) -> dict | list | None:
     """Rate-limited GET/POST returning parsed JSON, or None on any failure."""
     host = urlparse(url).hostname or ""
     lock = _locks.setdefault(host, asyncio.Lock())
@@ -139,7 +148,7 @@ async def _get_json(url: str, *, params: dict | None = None, data: dict | None =
             if wait > 0:
                 await asyncio.sleep(wait)
             _last[host] = time.monotonic()
-        async with httpx.AsyncClient(timeout=timeout, headers={"User-Agent": USER_AGENT}) as client:
+        async with httpx.AsyncClient(timeout=timeout, headers={"User-Agent": USER_AGENT, **(headers or {})}) as client:
             if data is not None:
                 resp = await client.post(url, data=data)
             else:
@@ -398,12 +407,90 @@ _II = {"prop": "imageinfo", "iiprop": "url|mime|extmetadata", "iiurlwidth": THUM
        "action": "query", "iiextmetadatafilter": "Artist|LicenseShortName|LicenseUrl"}
 
 
-async def photos(hint: PhotoHint) -> list[Photo]:
-    """Photos for a hint: a Commons file, a Wikidata item, a point, or a search phrase."""
-    key = hint.model_dump_json()
+# ---- Openverse: openly licensed photos of similar places and ideas (no key needed)
+
+LICENCE_NAMES = {"cc0": "CC0", "pdm": "Public domain"}
+
+
+def parse_openverse(payload: dict | None, relation: str, limit: int = 3) -> list[Photo]:
+    """Openverse search results -> credited photos served from the Openverse thumbnail proxy."""
+    out: list[Photo] = []
+    for r in ((payload or {}).get("results") or []) if isinstance(payload, dict) else []:
+        if not isinstance(r, dict) or r.get("mature") or not re.fullmatch(r"[0-9a-f-]{36}", str(r.get("id", ""))):
+            continue
+        thumb = f"https://{OPENVERSE_HOST}/v1/images/{r['id']}/thumb/"
+        code = str(r.get("license", "")).lower()
+        licence = LICENCE_NAMES.get(code) or f"CC {code.upper()} {r.get('license_version') or ''}".strip()
+        lic_url = str(r.get("license_url") or "")
+        out.append(Photo(thumb=thumb, title=_clean(r.get("title") or "Untitled", 100) or "Untitled",
+                         author=_clean(r.get("creator") or "", 80) or "Unknown author", licence=licence[:40],
+                         licence_url=lic_url if lic_url.startswith("https://creativecommons.org/") else None,
+                         page=f"https://openverse.org/image/{r['id']}", relation=relation, source="openverse"))
+        if len(out) >= limit:
+            break
+    return out
+
+
+async def openverse(query: str, relation: str = "similar", limit: int = 3) -> list[Photo]:
+    """Photos for a phrase like "cafe interior". Cached for a day: the anonymous quota is small."""
+    key = ("openverse", query.lower(), relation)
     hit = photo_cache.get(key)
     if hit is not None:
         return hit
+    payload = await _get_json(OPENVERSE, params={"q": query, "page_size": 8, "mature": "false"}, timeout=20.0)
+    rows = parse_openverse(payload if isinstance(payload, dict) else None, relation, limit)
+    photo_cache.put(key, rows, ttl=None if rows else 120)  # a slow or busy Openverse is retried soon
+    return rows
+
+
+# ---- Foursquare: real venue photos, only when the host configured a key
+
+def fsq_key() -> str:
+    return os.getenv("FOURSQUARE_API_KEY", "").strip()
+
+
+def _same_place(a: str, b: str) -> bool:
+    x, y = re.sub(r"\W+", " ", a.lower()).strip(), re.sub(r"\W+", " ", b.lower()).strip()
+    return bool(x and y) and (x in y or y in x)
+
+
+async def foursquare(name: str, lat: float, lon: float, limit: int = 3) -> list[Photo]:
+    """Photos of a named place from Foursquare Places. Empty without a key or a confident match:
+    the match must share the name and lie within 150 m of the OSM point."""
+    key = fsq_key()
+    if not key:
+        return []
+    headers = {"Authorization": f"Bearer {key}", "X-Places-Api-Version": FSQ_VERSION, "Accept": "application/json"}
+    found = await _get_json(f"{FSQ_API}/places/search", params={
+        "query": name, "ll": f"{lat:.5f},{lon:.5f}", "radius": 150, "limit": 3}, headers=headers, timeout=8.0)
+    match = None
+    for r in (found or {}).get("results", []) if isinstance(found, dict) else []:
+        try:
+            near = distance_km(lat, lon, float(r["latitude"]), float(r["longitude"])) <= 0.15
+        except (KeyError, TypeError, ValueError):
+            near = False
+        if near and _same_place(str(r.get("name", "")), name) and re.fullmatch(r"\w{8,40}", str(r.get("fsq_place_id", ""))):
+            match = r
+            break
+    if match is None:
+        return []
+    pid = match["fsq_place_id"]
+    pics = await _get_json(f"{FSQ_API}/places/{pid}/photos", params={"limit": limit}, headers=headers, timeout=8.0)
+    out: list[Photo] = []
+    for ph in pics if isinstance(pics, list) else []:
+        prefix, suffix = str(ph.get("prefix", "")), str(ph.get("suffix", ""))
+        url = urlparse(prefix)
+        if url.scheme != "https" or url.hostname != FSQ_IMAGE_HOST or not re.fullmatch(r"/[\w./-]+\.(?:jpe?g|png)", suffix):
+            continue
+        out.append(Photo(thumb=f"{prefix}800x600{suffix}", title=_clean(match.get("name", name), 100), author="Foursquare",
+                         licence="Foursquare", page=f"https://foursquare.com/v/{pid}", relation="place",
+                         source="foursquare"))
+    return out[:limit]
+
+
+# ---- the pipeline
+
+async def _commons(hint: PhotoHint) -> list[Photo]:
     result: list[Photo] = []
     if hint.wikidata and not hint.file:
         claims = await _get_json(WIKIDATA, params={"action": "wbgetclaims", "entity": hint.wikidata,
@@ -416,15 +503,40 @@ async def photos(hint: PhotoHint) -> list[Photo]:
     if hint.file:
         payload = await _get_json(COMMONS, params={**_II, "titles": hint.file})
         result = parse_imageinfo(payload if isinstance(payload, dict) else None, "place", 1)
-    if not result and hint.lat is not None and hint.lon is not None:
+    return result
+
+
+async def photos(hint: PhotoHint) -> list[Photo]:
+    """Photos for an option, the place's own first.
+
+    1. Wikimedia Commons / Wikidata photos of this place (OSM tags).
+    2. Foursquare photos of this place, when a key is configured and the match is confident.
+    3. Commons photos taken near the point, only when nothing better is asked for.
+    4. Openverse "similar vibe" photos for ``vibe`` (always labelled as not this place).
+    5. Commons, then Openverse, inspiration photos for an idea in ``query``.
+    """
+    key = hint.model_dump_json()
+    hit = photo_cache.get(key)
+    if hit is not None:
+        return hit
+    result = await _commons(hint)
+    if hint.name and hint.lat is not None and hint.lon is not None and not result:
+        result += await foursquare(hint.name, hint.lat, hint.lon)
+    if not result and not hint.vibe and not hint.query and hint.lat is not None and hint.lon is not None:
         payload = await _get_json(COMMONS, params={**_II, "generator": "geosearch", "ggsnamespace": 6,
                                                    "ggscoord": f"{hint.lat:.5f}|{hint.lon:.5f}",
                                                    "ggsradius": 1000, "ggslimit": 8})
         result = parse_imageinfo(payload if isinstance(payload, dict) else None, "near")
-    if not result and hint.query:
+    if hint.vibe:
+        result += await openverse(hint.vibe, "similar")
+    if hint.query:
         payload = await _get_json(COMMONS, params={**_II, "generator": "search", "gsrnamespace": 6,
                                                    "gsrsearch": f"{hint.query} filetype:bitmap", "gsrlimit": 8})
-        result = relevant(parse_imageinfo(payload if isinstance(payload, dict) else None, "inspiration", 8),
-                          hint.query)[:3]
-    photo_cache.put(key, result, ttl=None if result else 900)
+        found = relevant(parse_imageinfo(payload if isinstance(payload, dict) else None, "inspiration", 8),
+                         hint.query)[:3]
+        if len(found) < 3:
+            found += (await openverse(hint.query, "inspiration"))[: 3 - len(found)]
+        result += found
+    result = result[:6]
+    photo_cache.put(key, result, ttl=None if result else 120)
     return result

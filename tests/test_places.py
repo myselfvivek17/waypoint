@@ -107,7 +107,79 @@ def test_imageinfo_keeps_only_wikimedia_hosts_and_cleans_attribution():
 def test_photo_lookup_failure_is_empty():
     with respx.mock as mock:
         mock.get(places.COMMONS).mock(return_value=httpx.Response(503))
+        mock.get(places.OPENVERSE).mock(return_value=httpx.Response(429))
         assert run(places.photos(PhotoHint(query="marigold"))) == []
+
+
+OV_ID = "2e81a945-2a6f-41fd-945c-e1a9400b270d"
+
+
+def ov(**over):
+    row = {"id": OV_ID, "title": "Candid Arts Trust cafe interior", "creator": "Eithin", "license": "by",
+           "license_version": "2.0", "license_url": "https://creativecommons.org/licenses/by/2.0/", "mature": False,
+           "thumbnail": f"https://api.openverse.org/v1/images/{OV_ID}/thumb/",
+           "foreign_landing_url": "https://www.flickr.com/photos/x/1"}
+    return {**row, **over}
+
+
+def test_openverse_results_are_credited_and_served_from_the_proxy():
+    rows = places.parse_openverse({"results": [ov(), ov(id="not-a-uuid"), ov(mature=True),
+                                               ov(id="11111111-2222-3333-4444-555555555555", license="cc0",
+                                                  license_version=None, creator=None)]}, "similar")
+    assert [r.licence for r in rows] == ["CC BY 2.0", "CC0"]
+    a = rows[0]
+    assert a.thumb == f"https://api.openverse.org/v1/images/{OV_ID}/thumb/" and a.page == f"https://openverse.org/image/{OV_ID}"
+    assert a.author == "Eithin" and a.relation == "similar" and a.source == "openverse"
+    assert rows[1].author == "Unknown author"
+
+
+def test_venue_photos_put_the_place_first_then_similar_vibe():
+    commons = {"query": {"pages": {"1": {"title": "File:Olive Kitchen.jpg", "index": 1, "imageinfo": [{
+        "thumburl": "https://upload.wikimedia.org/a/olive.jpg", "mime": "image/jpeg",
+        "descriptionurl": "https://commons.wikimedia.org/wiki/File:Olive_Kitchen.jpg", "extmetadata": {}}]}}}}
+    with respx.mock as mock:
+        mock.get(places.COMMONS).mock(return_value=httpx.Response(200, json=commons))
+        mock.get(places.OPENVERSE).mock(return_value=httpx.Response(200, json={"results": [ov()]}))
+        rows = run(places.photos(PhotoHint(file="File:Olive Kitchen.jpg", vibe="restaurant interior",
+                                           relation="place")))
+    assert [(r.relation, r.source) for r in rows] == [("place", "wikimedia"), ("similar", "openverse")]
+
+
+def test_openverse_is_cached_for_the_small_anonymous_quota():
+    with respx.mock as mock:
+        route = mock.get(places.OPENVERSE).mock(return_value=httpx.Response(200, json={"results": [ov()]}))
+        run(places.openverse("cafe interior"))
+        run(places.openverse("Cafe Interior"))
+    assert route.call_count == 1
+
+
+def test_foursquare_is_skipped_without_a_key(monkeypatch):
+    monkeypatch.delenv("FOURSQUARE_API_KEY", raising=False)
+    with respx.mock(assert_all_called=False) as mock:
+        route = mock.get(url__startswith=places.FSQ_API)
+        assert run(places.foursquare("Olive Kitchen", 17.444, 78.353)) == []
+    assert route.call_count == 0
+
+
+@pytest.mark.parametrize("name,lat,ok", [("Olive Kitchen", 17.4441, True), ("Olive Kitchen", 17.4600, False),
+                                         ("Some Other Cafe", 17.4441, False)])
+def test_foursquare_needs_a_confident_match(monkeypatch, name, lat, ok):
+    monkeypatch.setenv("FOURSQUARE_API_KEY", "k")
+    found = {"results": [{"fsq_place_id": "4b0588f7f964a5203ad622e3", "name": name, "latitude": lat,
+                          "longitude": 78.353}]}
+    pics = [{"prefix": "https://fastly.4sqi.net/img/general/", "suffix": "/123_abc.jpg"},
+            {"prefix": "https://evil.example.com/", "suffix": "/x.jpg"}]
+    with respx.mock(assert_all_called=False) as mock:
+        mock.get(f"{places.FSQ_API}/places/search").mock(return_value=httpx.Response(200, json=found))
+        photos_route = mock.get(f"{places.FSQ_API}/places/4b0588f7f964a5203ad622e3/photos").mock(
+            return_value=httpx.Response(200, json=pics))
+        rows = run(places.foursquare("Olive Kitchen", 17.444, 78.353))
+    if ok:
+        assert [r.thumb for r in rows] == ["https://fastly.4sqi.net/img/general/800x600/123_abc.jpg"]
+        assert rows[0].source == "foursquare" and rows[0].relation == "place"
+        assert photos_route.calls[0].request.headers["authorization"] == "Bearer k"
+    else:
+        assert rows == [] and photos_route.call_count == 0
 
 
 # ---------------------------------------------------------------- invented places

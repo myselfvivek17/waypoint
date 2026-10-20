@@ -93,12 +93,19 @@ class Ripple(BaseModel):
 
 
 class PhotoHint(BaseModel):
-    """Where real photos for an option may be found (all optional)."""
+    """Where real photos for an option may be found (all optional).
+
+    ``file``/``wikidata`` and ``name`` + point find photos of THIS place (Wikimedia, Foursquare);
+    ``vibe`` finds openly licensed photos of similar places (Openverse), always labelled as such;
+    ``query`` finds inspiration photos for an idea (a theme, a dish).
+    """
 
     file: str | None = None
     wikidata: str | None = None
     lat: float | None = None
     lon: float | None = None
+    name: str | None = None
+    vibe: str | None = None
     query: str | None = None
     relation: Literal["place", "near", "inspiration"] = "inspiration"
 

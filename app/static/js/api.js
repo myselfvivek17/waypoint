@@ -42,6 +42,8 @@ export const api = {
     if (hint.file) q.file = hint.file;
     else if (hint.wikidata) q.wikidata = hint.wikidata;
     if (hint.lat != null && hint.lon != null) { q.lat = hint.lat.toFixed(5); q.lon = hint.lon.toFixed(5); }
+    if (hint.name) q.name = hint.name;
+    if (hint.vibe) q.vibe = hint.vibe;
     if (hint.query) q.q = hint.query;
     return call('GET', '/api/photo?' + new URLSearchParams(q), null, 30000);
   },
