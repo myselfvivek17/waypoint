@@ -3,14 +3,57 @@ import { api, errorText } from './api.js';
 import { dayIcon } from './art.js';
 import { h, inr, longDate } from './dom.js';
 import { budgetLine, stopsModel, summary, taskRows } from './model.js';
-import { applyAdjustment, state, toggleTick } from './store.js';
+import { applyAdjustment, pickItemAlt, setItemStatus, state, toggleTick } from './store.js';
 import { announce, go, say, stopThinking, think, todayIso, update } from './ui.js';
 
-const ADJ_CHIPS = ['Cut the budget by 20%', 'Add 15 guests', 'Move it outdoors', 'Make the food cheaper'];
+/** Suggested requests, chosen from what this plan actually has. */
+function adjustChips(plan) {
+  const has = (k) => plan.stops.some((s) => s.key === k && s.status === 'open');
+  return [
+    has('cake') ? "I don't want a cake" : null,
+    has('puja') ? 'We already have a poojari' : null,
+    has('food') ? 'We will cook at home' : null,
+    plan.stops.some((s) => s.key === 'photographer') ? null : 'Add a photographer',
+    has('invites') ? 'Skip the invites' : null,
+    'Cut the budget by 20%', 'Add 15 guests',
+  ].filter(Boolean).slice(0, 6);
+}
+const ITEM_WORD = { skip: 'Skipped', have: 'Sorted', own: 'Your words' };
 
 // ------------------------------------------------------------------ day
 
-export function dayView() {
+function itemControls(it) {
+  const set = (status, mine) => { setItemStatus(it.id, status, mine); update({ dayForm: null, dayDraft: '', dayAlts: null }, { focus: 'di-' + it.id }); };
+  const form = state.dayForm && state.dayForm.id === it.id ? state.dayForm.kind : null;
+  const ctl = [];
+  if (it.status !== 'keep') {
+    ctl.push(h('button', { class: 'chip', id: 'di-' + it.id, type: 'button', onClick: () => set('keep') }, 'Keep it as planned',
+      h('span', { class: 'sr' }, ': ' + it.title)));
+  } else {
+    ctl.push(
+      h('button', { class: 'chip', id: 'di-' + it.id, type: 'button', onClick: () => set('skip') }, 'Skip', h('span', { class: 'sr' }, ' ' + it.title)),
+      h('button', { class: 'chip', type: 'button', 'aria-expanded': String(form === 'have'),
+        onClick: () => update({ dayForm: form === 'have' ? null : { id: it.id, kind: 'have' }, dayDraft: '' }, { focus: 'dd-in' }) },
+      'I already have this', h('span', { class: 'sr' }, ': ' + it.title)),
+      it.alts && it.alts.length ? h('button', { class: 'chip', type: 'button', 'aria-expanded': String(state.dayAlts === it.id),
+        onClick: () => update({ dayAlts: state.dayAlts === it.id ? null : it.id, dayForm: null }, { focus: null }) },
+      'Show options', h('span', { class: 'sr' }, ' for ' + it.title)) : null,
+      h('button', { class: 'chip', type: 'button', 'aria-expanded': String(form === 'own'),
+        onClick: () => update({ dayForm: form === 'own' ? null : { id: it.id, kind: 'own' }, dayDraft: '' }, { focus: 'dd-in' }) },
+      'Write my own', h('span', { class: 'sr' }, ' instead of ' + it.title)));
+  }
+  return [h('div', { class: 'dctl', role: 'group', 'aria-label': 'Change this moment' }, ctl),
+    state.dayAlts === it.id ? h('ul', { class: 'dalts', 'aria-label': 'Other ways to do this' }, it.alts.map((a) => h('li', null,
+      h('button', { class: 'chip', type: 'button', onClick: () => { pickItemAlt(it.id, a); update({ dayAlts: null }, { focus: 'di-' + it.id }); say(`Changed to: ${a}.`); } }, a)))) : null,
+    form ? h('form', { class: 'dform', onSubmit: (e) => { e.preventDefault(); const v = state.dayDraft.trim(); if (form === 'own' && !v) return; set(form, v); } },
+      h('label', { class: 'sr', for: 'dd-in' }, form === 'have' ? 'Who or what? (optional)' : 'What will you do instead?'),
+      h('input', { id: 'dd-in', class: 'cin', type: 'text', maxlength: 160, autocomplete: 'off', value: state.dayDraft,
+        placeholder: form === 'have' ? 'Who or what? (optional)' : 'What will you do instead?', onInput: (e) => { state.dayDraft = e.target.value; } }),
+      h('button', { class: 'btn pri', type: 'submit' }, 'Save'),
+      h('button', { class: 'btn', type: 'button', onClick: () => update({ dayForm: null }, { focus: 'di-' + it.id }) }, 'Cancel')) : null];
+}
+
+export function dayView(opts = {}) {
   const plan = state.plan, days = plan.days;
   const di = Math.min(state.dayTab, days.length - 1), day = days[di];
   const type = plan.profile.type;
@@ -18,13 +61,17 @@ export function dayView() {
     h('p', { class: 'step' }, (type === 'wedding' ? 'Wedding days' : type === 'birthday' ? 'Party day' : 'Event day') +
       ' · ' + (longDate(plan.profile.date) || 'date to be set')),
     h('h1', { class: 'disp h1', tabindex: '-1' }, day.title),
+    h('p', { class: 'lead' }, 'Every moment is a suggestion: keep it, skip it, say you have it covered, pick another way, or write your own.'),
     days.length > 1 ? h('div', { class: 'tabs', role: 'group', 'aria-label': 'Which function' },
       days.map((d, i) => h('button', { class: 'tab', type: 'button', 'aria-pressed': String(i === di),
         onClick: () => update({ dayTab: i }, { focus: 'h1' }) }, d.label))) : null,
-    h('ol', { class: 'tl' }, day.items.map((it, i) => h('li', { class: 'tli', style: { animationDelay: i * 160 + 'ms' } },
+    h('ol', { class: 'tl' + (opts.routeChanged ? ' anim' : '') }, day.items.map((it, i) => h('li', { class: 'tli' + (it.status === 'skip' ? ' skip' : ''), style: { animationDelay: i * 160 + 'ms' } },
       h('div', { class: 'tart' }, dayIcon(it.art)),
-      h('div', { class: 'tbody' }, h('p', { class: 'ttime' }, it.time), h('h2', { class: 'disp tt' }, it.title),
-        it.note ? h('p', null, it.note) : null)))),
+      h('div', { class: 'tbody' }, h('p', { class: 'ttime' }, it.time),
+        h('h2', { class: 'disp tt' }, it.status === 'own' && it.mine ? it.mine : it.title),
+        it.status !== 'keep' ? h('p', { class: 'mine' }, ITEM_WORD[it.status] + (it.status === 'have' && it.mine ? ': ' + it.mine : it.status === 'own' ? ` (instead of “${it.title}”)` : '')) : null,
+        it.note && it.status === 'keep' ? h('p', null, it.note) : null,
+        itemControls(it))))),
     h('div', { class: 'acts' },
       h('button', { class: 'btn', type: 'button', onClick: () => go('journey', { focus: 'stop' }) }, 'Back to the journey'),
       h('button', { class: 'btn mari', type: 'button', onClick: () => go('plan') }, 'Open my plan')));
@@ -45,18 +92,31 @@ export function adjustLine(request) {
   return `Working out: “${request.slice(0, 60)}”…`;
 }
 
+/** "Yes, do that": the closest operation offered for a request I couldn't read. */
+async function runSuggestion(sug) {
+  update({ busy: true, adjMsg: '', adjSuggest: null, diff: null });
+  think(sug.text.replace(/\?$/, '…'));
+  const booked = state.plan.stops.map((s) => s.key).filter((k) => state.ticks[k]);
+  const r = await api.apply({ plan: state.plan, chosen: state.j.chosen, ripples: state.j.ripples, booked, ops: [sug.op] });
+  stopThinking();
+  if (!r.ok || !r.data.understood) { update({ busy: false, adjMsg: r.ok ? r.data.note : errorText(r) }); return; }
+  update({ busy: false, diff: Object.assign({ request: sug.request }, r.data), adjSource: 'rules' }, { focus: 'diff-h' });
+  announce(`${r.data.title}. ${r.data.note}`);
+}
+
 async function runAdjust(text) {
   const request = String(text || '').trim().slice(0, 300);
   if (!request) return;
-  update({ busy: true, adjMsg: '', diff: null });
+  update({ busy: true, adjMsg: '', adjSuggest: null, diff: null });
   think(adjustLine(request));
   const booked = state.plan.stops.map((s) => s.key).filter((k) => state.ticks[k]);
   const r = await api.adjust({ plan: state.plan, chosen: state.j.chosen, ripples: state.j.ripples, booked, request });
   stopThinking();
   if (!r.ok) { update({ busy: false, adjMsg: errorText(r) }); return; }
   if (!r.data.understood) {
-    update({ busy: false, adjMsg: r.data.note, adjSource: r.data.source }, { focus: 'adj-msg' });
-    announce(r.data.note);
+    update({ busy: false, adjMsg: r.data.note, adjSource: r.data.source,
+      adjSuggest: r.data.suggest ? { op: r.data.suggest, text: r.data.suggest_text, request } : null }, { focus: 'adj-msg' });
+    announce(r.data.note + (r.data.suggest_text ? ' ' + r.data.suggest_text : ''));
     return;
   }
   update({ busy: false, diff: Object.assign({ request }, r.data), adjDraft: '', adjSource: r.data.source }, { focus: 'diff-h' });
@@ -117,7 +177,7 @@ function diffView(d) {
       h('thead', null, h('tr', null, h('th', { scope: 'col' }, 'What'), h('th', { scope: 'col' }, 'Before'), h('th', { scope: 'col' }, 'After'))),
       h('tbody', null, d.rows.map((r) => h('tr', null, h('td', null, r.label), h('td', null, r.before), h('td', null, h('b', null, r.after)))))),
     h('p', { class: 'chgmsg' }, d.note,
-      d.source !== 'ai' ? h('span', { class: 'tt2' }, ' (Understood by the rules parser, not the AI.)') : null),
+      d.source === 'rules' ? null : d.source !== 'ai' ? h('span', { class: 'tt2' }, ' (Understood by the rules parser, not the AI.)') : null),
     h('div', { class: 'pact' },
       h('button', { class: 'btn mari', type: 'button', onClick: applyDiff }, 'Apply changes'),
       h('button', { class: 'btn', type: 'button', onClick: () => update({ diff: null }, { focus: 'adj-in' }) }, 'Keep as it is')));
@@ -172,8 +232,10 @@ export function planView() {
               placeholder: 'e.g. cut the budget by 20%', value: state.adjDraft, onInput: (e) => { state.adjDraft = e.target.value; } }),
             h('button', { class: 'btn pri', type: 'submit', disabled: state.busy }, 'Show me')),
           h('div', { class: 'chips', role: 'group', 'aria-label': 'Suggestions' },
-            ADJ_CHIPS.map((c) => h('button', { class: 'chip', type: 'button', disabled: state.busy, onClick: () => runAdjust(c) }, c))),
+            adjustChips(plan).map((c) => h('button', { class: 'chip', type: 'button', disabled: state.busy, onClick: () => runAdjust(c) }, c))),
           state.adjMsg ? h('p', { class: 'chgmsg', id: 'adj-msg', role: 'status', tabindex: '-1' }, state.adjMsg) : null,
+          state.adjSuggest ? h('div', { class: 'pact' }, h('button', { class: 'btn', type: 'button', disabled: state.busy,
+            onClick: () => runSuggestion(state.adjSuggest) }, 'Closest I can do: ' + state.adjSuggest.text)) : null,
           state.diff ? diffView(state.diff) : null))),
     h('div', { class: 'acts' },
       h('button', { class: 'btn mari', type: 'button', onClick: () => addCal(rows) }, 'Add deadlines to calendar'),

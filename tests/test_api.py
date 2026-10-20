@@ -3,7 +3,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from app import main, planner
+from app import choices, main, planner
 from app.validators import line_total
 
 client = TestClient(main.app)
@@ -195,8 +195,8 @@ def test_static_assets_are_compressed_and_revalidated():
 
 def test_adjust_model_unknown_falls_back_to_the_rules_parser(plan, monkeypatch):
     async def unknown(*a, **k):
-        return planner.llm.Result(planner.Intent(action="unknown", reply="Not sure."), "ai")
-    monkeypatch.setattr(planner.llm, "ask", unknown)
+        return choices.llm.Result(choices.OpsDraft(ops=[], reply="Not sure."), "ai")
+    monkeypatch.setattr(choices.llm, "ask", unknown)
     r = client.post("/api/adjust", json={"plan": plan, "request": "add 15 guests"}).json()
     assert r["understood"] and r["profile"]["guests"] == 45 and r["source"] == "fallback"
 

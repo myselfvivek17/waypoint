@@ -1,12 +1,12 @@
 /* The journey: Today → one stop at a time → the event day. Path, Map and List views,
    one proposal per stop with real photos, an options sheet, and a live budget bar. */
-import { api } from './api.js';
+import { api, errorText } from './api.js';
 import { landscape, mapBase, noPhotoIcon, toneArt } from './art.js';
 import { h, inr, s, safeUrl } from './dom.js';
 import { chipDefs } from './intake.js';
 import { allOptions, budgetLine, lineTotal, maxReach, nextIndex, stopsModel, summary } from './model.js';
-import { chooseOption, confirmStop, state } from './store.js';
-import { announce, go, later, rerender, say, update } from './ui.js';
+import { applyAdjustment, chooseOption, confirmStop, setStopStatus, state } from './store.js';
+import { announce, go, later, rerender, say, stopThinking, think, update } from './ui.js';
 
 const PHOTO_HOSTS = ['upload.wikimedia.org', 'api.openverse.org', 'fastly.4sqi.net'];
 const PAGE_HOSTS = ['commons.wikimedia.org', 'openverse.org', 'foursquare.com'];
@@ -150,6 +150,176 @@ function submitChange(m) {
   else update({ changeMsg: "I couldn't pin that down, so here are all the alternatives I have.", sheet: true }, { focus: 'sheet' });
 }
 
+// ------------------------------------------------------------------ user choice
+
+const STATUS_WORD = { skip: 'Skipped', have: 'You have this', own: 'Your way' };
+const ADD_SUGGESTIONS = ['Photographer', 'Mehendi artist', 'Return gifts', 'DJ & music', 'Lights', 'Makeup artist',
+  'Anchor', 'Poojari', 'Transport'];
+
+/** Structural changes (a stop's way of doing it, adding or removing a stop) are re-planned on the
+    server by the rules, then adopted through the store like any other adjustment. */
+async function runOps(ops, line) {
+  think(line);
+  const booked = state.plan.stops.map((s) => s.key).filter((k) => state.ticks[k]);
+  const r = await api.apply({ plan: state.plan, chosen: state.j.chosen, ripples: state.j.ripples, booked, ops });
+  stopThinking();
+  if (!r.ok) { say(errorText(r)); return null; }
+  if (!r.data.understood) { say(r.data.note); return null; }
+  const before = Object.fromEntries(stopsModel(state).map((x) => [x.key, x]));
+  const next = Object.assign({}, state, { plan: r.data.plan, j: Object.assign({}, state.j, { chosen: r.data.chosen, ripples: r.data.ripples }) });
+  const changes = stopsModel(next).filter((a) => !before[a.key] || a.item.id !== before[a.key].item.id || a.price !== before[a.key].price)
+    .map((a) => ({ key: a.key, itemChanged: !before[a.key] || a.item.id !== before[a.key].item.id }));
+  applyAdjustment(Object.assign({ request: '' }, r.data), changes);
+  return r.data;
+}
+
+/** Skip, "I already have this" or "Write my own": decided on the spot, then on to the next stop. */
+function setStatus(m, cur, status, note = '', cost = null) {
+  setStopStatus(cur.key, status, note, cost);
+  const after = stopsModel(state);
+  const next = nextIndex(after, Object.fromEntries(after.map((x) => [x.key, x.decided])), cur.i);
+  update({ j: Object.assign({}, state.j, { stopIdx: next }), choiceForm: null, choiceNote: '', choiceCost: '', why: false, change: false },
+    { focus: next >= after.length ? 'finale' : 'stop' });
+  const freed = after[cur.i].freed;
+  say(status === 'skip' ? `Skipping the ${cur.label.toLowerCase()}${freed ? `: ${inr(freed)} freed` : ''}.`
+    : status === 'have' ? `Marked as yours: ${cur.label.toLowerCase()}.` : `Kept in your words: ${cur.label.toLowerCase()}.`);
+}
+
+async function restore(cur) {
+  if (cur.s.mode === 'have' && cur.s.modes.some((x) => x.id === 'need')) {
+    const d = await runOps([{ op: 'set_mode', stop: cur.key, mode: 'need' }], 'Finding temples near you to ask for a poojari…');
+    if (d) update({ choiceForm: null }, { focus: 'stop' });
+    return;
+  }
+  setStopStatus(cur.key, 'open');
+  update({ choiceForm: null }, { focus: 'stop' });
+  announce(`${cur.label}: back to my suggestion, ${cur.item.name}.`);
+}
+
+async function setMode(cur, mode) {
+  const row = cur.s.modes.find((x) => x.id === mode);
+  if (!row || mode === cur.s.mode) return;
+  const d = await runOps([{ op: 'set_mode', stop: cur.key, mode }], `Re-planning the ${cur.label.toLowerCase()} as “${row.label.toLowerCase()}”…`);
+  if (!d) return;
+  update({ why: true }, { focus: 'stop' });
+  say(d.note && !/^Fits the budget/.test(d.note) ? d.note.split(' Fits the budget')[0] : `${cur.label}: ${row.label.toLowerCase()}.`);
+}
+
+async function addStop(name) {
+  const text = String(name || '').trim().slice(0, 60);
+  if (!text) return;
+  const before = new Set(state.plan.stops.map((s) => s.key));
+  const d = await runOps([{ op: 'add_stop', name: text }], `Adding ${text.toLowerCase()} to the route…`);
+  if (!d) return;
+  const added = state.plan.stops.findIndex((s) => !before.has(s.key));
+  update({ addOpen: false, addDraft: '', j: Object.assign({}, state.j, { stopIdx: added >= 0 ? added : state.j.stopIdx, view: 'path' }) },
+    { focus: 'stop' });
+  say(d.title + '.');
+}
+
+async function removeStop(cur) {
+  if (state.confirmRemove !== cur.key) {
+    update({ confirmRemove: cur.key }, { focus: 'rm-btn' });
+    later(() => { if (state.confirmRemove === cur.key) update({ confirmRemove: null }, { focus: null }); }, 5000);
+    return;
+  }
+  const d = await runOps([{ op: 'remove_stop', stop: cur.key }], `Re-planning without the ${cur.label.toLowerCase()}…`);
+  update({ confirmRemove: null }, { focus: 'stop' });
+  if (d) say(d.title + (d.freed ? `: ${inr(d.freed)} freed.` : '.'));
+}
+
+function modePicker(cur) {
+  const st = cur.s;
+  if (!st.modes || !st.modes.length) return null;
+  const row = st.modes.find((x) => x.id === st.mode);
+  return h('div', { class: 'modes', role: 'group', 'aria-labelledby': 'mode-h' },
+    h('p', { class: 'modeh', id: 'mode-h' }, 'How do you want to do this? ', h('span', { class: 'aitag' }, 'Rules engine, not AI')),
+    h('div', { class: 'chips' }, st.modes.map((x) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(x.id === st.mode),
+      disabled: state.busy, onClick: () => setMode(cur, x.id) }, x.label))),
+    row ? h('p', { class: 'tt2 modewhy' }, row.why) : null);
+}
+
+function choiceForm(m, cur) {
+  const kind = state.choiceForm;
+  if (!kind) return null;
+  const save = (e) => {
+    e.preventDefault();
+    const note = state.choiceNote.trim();
+    if (kind === 'own' && !note) { update({ choiceMsg: 'Write what you will do instead.' }, { focus: 'ch-note' }); return; }
+    setStatus(m, cur, kind, note, state.choiceCost);
+  };
+  return h('form', { class: 'chg choiceform', id: 'choice-form', onSubmit: save },
+    h('label', { for: 'ch-note', class: 'flab' }, kind === 'have' ? 'Who or what? (optional)' : 'What will you do instead?'),
+    h('input', { id: 'ch-note', class: 'cin', type: 'text', maxlength: 160, autocomplete: 'off', value: state.choiceNote,
+      required: kind === 'own', placeholder: kind === 'have' ? 'e.g. our family poojari, Meera aunty' : 'e.g. my aunt is cooking',
+      onInput: (e) => { state.choiceNote = e.target.value; } }),
+    h('label', { for: 'ch-cost', class: 'flab' }, 'What it costs you, in rupees (optional)'),
+    h('input', { id: 'ch-cost', class: 'cin', type: 'number', min: 0, max: 500000000, step: 100, inputmode: 'numeric', value: state.choiceCost,
+      onInput: (e) => { state.choiceCost = e.target.value; } }),
+    state.choiceMsg ? h('p', { class: 'err', role: 'alert' }, state.choiceMsg) : null,
+    h('div', { class: 'pact' }, h('button', { class: 'btn pri', type: 'submit' }, kind === 'have' ? 'Mark as mine' : 'Use my words'),
+      h('button', { class: 'btn', type: 'button', onClick: () => update({ choiceForm: null, choiceMsg: '' }, { focus: 'ch-' + kind }) }, 'Cancel')));
+}
+
+function choiceRow(m, cur) {
+  const open = (kind) => update({ choiceForm: state.choiceForm === kind ? null : kind, choiceNote: kind === 'have' ? '' : '',
+    choiceCost: '', choiceMsg: '' }, { focus: state.choiceForm === kind ? null : 'ch-note' });
+  return [h('div', { class: 'choice', role: 'group', 'aria-label': `Other ways to handle the ${cur.label.toLowerCase()}` },
+    h('button', { class: 'chip', id: 'ch-skip', type: 'button', onClick: () => setStatus(m, cur, 'skip') }, 'Skip'),
+    h('button', { class: 'chip', id: 'ch-have', type: 'button', 'aria-expanded': String(state.choiceForm === 'have'), 'aria-controls': 'choice-form',
+      onClick: () => open('have') }, 'I already have this'),
+    h('button', { class: 'chip', id: 'ch-own', type: 'button', 'aria-expanded': String(state.choiceForm === 'own'), 'aria-controls': 'choice-form',
+      onClick: () => open('own') }, 'Write my own'),
+    h('button', { class: 'chip quiet', id: 'rm-btn', type: 'button', onClick: () => removeStop(cur) },
+      state.confirmRemove === cur.key ? `Tap again to remove the ${cur.label.toLowerCase()}` : 'Remove stop')),
+  choiceForm(m, cur)];
+}
+
+function statusCard(m, idx) {
+  const cur = m[idx], st = cur.s, label = cur.label.toLowerCase();
+  const cost = cur.price ? ` · ${inr(cur.price)} (your figure)` : '';
+  const head = st.status === 'skip' ? `No ${label}` : st.status === 'have' ? st.note || `You have the ${label}` : st.note;
+  const body = st.status === 'skip' ? `You're leaving out the ${label}.${cur.freed ? ` ${inr(cur.freed)} is freed and kept as savings.` : ''}`
+    : st.status === 'have' ? `Covered by you, so I won't suggest anything here${cost}. I'll remind you to confirm it.`
+      : `Kept exactly as you wrote it${cost}. It goes on your task list as it is.`;
+  const next = () => {
+    const n = nextIndex(m, Object.fromEntries(m.map((x) => [x.key, x.decided])), cur.i);
+    update({ j: Object.assign({}, state.j, { stopIdx: n }) }, { focus: n >= m.length ? 'finale' : 'stop' });
+  };
+  return h('section', { class: 'prop', 'aria-labelledby': 'prop-h' },
+    h('div', { class: 'nophoto stat ' + st.status }, h('div', null, noPhotoIcon(),
+      h('p', { class: 'disp', style: { fontSize: '24px', color: 'var(--ink)' } }, STATUS_WORD[st.status]),
+      h('p', null, st.status === 'skip' ? 'Not in the plan or the budget.' : 'Your choice, not a suggestion.'))),
+    h('div', null,
+      h('p', { class: 'step' }, `Stop ${idx + 1} of ${m.length} · ${st.label} `, h('span', { class: 'aitag' }, 'Your choice')),
+      cur.flag ? h('p', { class: 'upd' }, 'Updated: ' + cur.flag.note) : null,
+      h('h2', { id: 'prop-h', class: 'disp ph2', tabindex: '-1' }, head),
+      h('p', { class: 'preason' }, body),
+      st.mode === 'have' ? modePicker(cur) : null,
+      h('div', { class: 'pact' },
+        h('button', { class: 'btn mari', type: 'button', onClick: next }, 'Continue'),
+        h('button', { class: 'btn', id: 'restore-btn', type: 'button', onClick: () => restore(cur) },
+          st.status === 'skip' ? `Bring the ${label} back` : 'Show me suggestions again'),
+        st.status !== 'skip' ? h('button', { class: 'btn', type: 'button',
+          onClick: () => { setStopStatus(cur.key, 'open'); update({ choiceForm: st.status, choiceNote: st.note, choiceCost: st.user_cost == null ? '' : String(st.user_cost) }, { focus: 'ch-note' }); } }, 'Edit') : null),
+      h('div', { class: 'choice' }, h('button', { class: 'chip quiet', id: 'rm-btn', type: 'button', onClick: () => removeStop(cur) },
+        state.confirmRemove === cur.key ? `Tap again to remove the ${label}` : 'Remove stop'))));
+}
+
+function addPanel() {
+  if (!state.addOpen) return null;
+  const have = new Set(state.plan.stops.map((s) => s.label.toLowerCase()));
+  const sugg = ADD_SUGGESTIONS.filter((x) => !have.has(x.toLowerCase()));
+  return h('div', { class: 'chg addp', id: 'addp', role: 'group', 'aria-labelledby': 'add-h' },
+    h('p', { id: 'add-h', style: { margin: '0 0 4px', fontWeight: '600' } }, 'Add a stop to the route'),
+    h('div', { class: 'chips' }, sugg.map((x) => h('button', { class: 'chip', type: 'button', disabled: state.busy, onClick: () => addStop(x) }, x))),
+    h('form', { class: 'ans', onSubmit: (e) => { e.preventDefault(); addStop(state.addDraft); } },
+      h('label', { class: 'sr', for: 'add-in' }, 'Something else to add'),
+      h('input', { id: 'add-in', class: 'cin', type: 'text', maxlength: 60, autocomplete: 'off', placeholder: 'Or type it: e.g. balloon artist',
+        value: state.addDraft, onInput: (e) => { state.addDraft = e.target.value; } }),
+      h('button', { class: 'btn pri', type: 'submit' }, 'Add')));
+}
+
 // ------------------------------------------------------------------ data fetches
 
 function photosFor(item, key) {
@@ -225,7 +395,7 @@ function budgetBar(m, idx, reach) {
     h('div', { class: 'budtop' },
       h('span', { 'data-budget-line': '' }, budgetLine(b)),
       h('span', { class: b.over ? 'over' : '' }, b.over ? `Over budget by ${inr(b.total - b.budget)}`
-        : `${inr(b.free)} still free`)),
+        : `${inr(b.free)} still free` + (b.freed ? ` (${inr(b.freed)} freed by skipping)` : ''))),
     h('div', { class: 'bar', role: 'group', 'aria-label': `Budget bar: planned ${inr(b.total)} against ${inr(b.budget)}` },
       segs, h('div', { class: 'mark', 'aria-hidden': 'true', style: { left: `calc(${((b.budget / b.denom) * 100).toFixed(2)}% - 2px)` } })),
     h('div', { class: 'legend', 'aria-hidden': 'true' },
@@ -234,7 +404,8 @@ function budgetBar(m, idx, reach) {
       h('button', { type: 'button', 'aria-disabled': i > reach ? 'true' : null, 'data-stop': x.key, 'data-price': x.price,
         onClick: () => (i > reach ? say('Decide the earlier stops first.') : openStop(i)) },
         h('span', { class: `sw ${x.decided ? 'd' : 'p'}`, 'aria-hidden': 'true' }),
-        `${x.label} ${inr(x.price)}`, h('span', { class: 'sr' }, x.decided ? ', decided' : ', suggestion'))))));
+        x.status === 'skip' ? h('s', null, x.label) : x.label, x.status === 'skip' ? ' skipped' : ` ${inr(x.price)}`,
+        h('span', { class: 'sr' }, x.status !== 'open' ? `, ${STATUS_WORD[x.status].toLowerCase()}` : x.decided ? ', decided' : ', suggestion'))))));
 }
 
 function rulesBox() {
@@ -262,13 +433,14 @@ function pathView(m, idx, reach, draw) {
   const pct = (x, y) => ({ left: (x / W) * 100 + '%', top: (y / H) * 100 + '%' });
   const nodes = m.map((x, i) => {
     const off = i > reach;
-    const cls = off ? 'later' : i === idx ? 'now' : x.decided ? 'done' : 'later';
-    const status = x.decided ? 'decided' : off ? 'to be decided later' : i === idx ? 'in progress' : 'proposed';
+    const cls = (off ? 'later' : i === idx ? 'now' : x.decided ? 'done' : 'later') + (x.status === 'skip' ? ' skip' : '');
+    const status = x.status !== 'open' ? STATUS_WORD[x.status].toLowerCase()
+      : x.decided ? 'decided' : off ? 'to be decided later' : i === idx ? 'in progress' : 'proposed';
     return h('button', { class: 'node ' + cls, type: 'button', style: pct(pts[i + 1][0], pts[i + 1][1]),
       'aria-label': `Stop ${i + 1}, ${x.label}, ${status}${x.flag && !off ? ', updated' : ''}`,
       'aria-current': i === idx ? 'step' : null, 'aria-disabled': off ? 'true' : null, 'data-i': i,
       onClick: () => (off ? say('Decide the earlier stops first, or use "Plan the rest for me".') : openStop(i)) },
-    h('span', { class: 'nb', 'aria-hidden': 'true' }, x.decided && i !== idx ? '✓' : String(i + 1)),
+    h('span', { class: 'nb', 'aria-hidden': 'true' }, x.status === 'skip' && i !== idx ? '–' : x.decided && i !== idx ? '✓' : String(i + 1)),
     h('span', { class: 'nl', 'aria-hidden': 'true' }, x.label),
     x.flag && !off ? h('span', { class: 'nu', 'aria-hidden': 'true' }, 'Updated') : null);
   });
@@ -359,8 +531,9 @@ function listView(m, idx, reach) {
     const off = i > reach;
     return h('li', { class: i === idx ? 'now' : null },
       h('div', null,
-        h('span', { class: 'sltag' }, `${x.label} · ${x.decided ? 'Decided' : off ? 'To be decided' : 'Proposed'}`), h('br'),
-        h('b', null, off ? 'Waiting on earlier stops' : x.item.name), off ? null : ' · ' + inr(x.price),
+        h('span', { class: 'sltag' }, `${x.label} · ${x.status !== 'open' ? STATUS_WORD[x.status] : x.decided ? 'Decided' : off ? 'To be decided' : 'Proposed'}`), h('br'),
+        h('b', null, off ? 'Waiting on earlier stops' : x.status === 'skip' ? 'Not in the plan' : x.status !== 'open' ? (x.s.note || STATUS_WORD[x.status]) : x.item.name),
+        off || x.status === 'skip' ? null : ' · ' + inr(x.price),
         x.flag && !off ? h('span', { class: 'tt2' }, ' · Updated: ' + x.flag.note) : null),
       h('button', { class: 'btn', type: 'button', disabled: off,
         onClick: () => { setJ({ view: 'path' }, { render: false }); openStop(i); } },
@@ -403,6 +576,7 @@ function photoBlock(cur) {
 }
 
 function proposal(m, idx) {
+  if (m[idx].status !== 'open') return statusCard(m, idx);
   const cur = m[idx], it = cur.item, st = cur.s, p = state.plan.profile, guests = p.guests || 0;
   const alts = allOptions(st).filter((o) => o.id !== it.id);
   const ai = state.plan.source === 'ai';
@@ -430,6 +604,8 @@ function proposal(m, idx) {
           onClick: () => update({ sheet: true, changeMsg: '' }, { focus: 'sheet' }) }, 'Show options'),
         h('button', { class: 'btn', type: 'button', 'aria-expanded': String(state.change), 'aria-controls': 'chg',
           onClick: () => update({ change: !state.change, changeMsg: '' }, { focus: state.change ? null : 'c-in' }) }, 'Change')),
+      choiceRow(m, cur),
+      modePicker(cur),
       h('button', { class: 'linkb', type: 'button', 'aria-expanded': String(state.why), 'aria-controls': 'why',
         onClick: () => update({ why: !state.why }) }, 'Why?'),
       state.why ? h('div', { class: 'why', id: 'why' },
@@ -554,7 +730,10 @@ export function journeyView(opts) {
           v[0].toUpperCase() + v.slice(1)))),
       h('button', { class: 'tgl', type: 'button', role: 'switch', 'aria-checked': String(!!j.nearby),
         onClick: () => setJ({ nearby: !j.nearby, view: !j.nearby ? 'map' : j.view, pin: null }) }, h('span', { class: 'knob', 'aria-hidden': 'true' }), 'Around the venue'),
-      h('button', { class: 'btn', type: 'button', disabled: state.planning || !undecided, onClick: planRest }, 'Plan the rest for me')),
+      h('button', { class: 'btn', type: 'button', disabled: state.planning || !undecided, onClick: planRest }, 'Plan the rest for me'),
+      h('button', { class: 'btn', id: 'add-btn', type: 'button', 'aria-expanded': String(!!state.addOpen), 'aria-controls': 'addp',
+        disabled: m.length >= 10, onClick: () => update({ addOpen: !state.addOpen }, { focus: state.addOpen ? null : 'add-in' }) }, '+ Add a stop')),
+    addPanel(),
     j.view === 'map' ? mapView(m) : j.view === 'list' ? listView(m, idx, reach) : pathView(m, idx, reach, !!(opts && opts.routeChanged)),
     idx >= n ? finale() : proposal(m, idx),
     plan.notes && plan.notes.length ? h('ul', { class: 'notes', 'aria-label': 'Notes about this plan' }, plan.notes.map((t) => h('li', null, t))) : null);

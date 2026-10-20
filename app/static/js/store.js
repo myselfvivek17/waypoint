@@ -25,6 +25,8 @@ function initial() {
     planning: false, adjDraft: '', adjMsg: '', adjSource: null, diff: null, inviteShown: false, online: navigator.onLine !== false,
     demo: {}, serverToday: null, llmMode: null, photos: {}, nearby: {},
     locBusy: false, locMsg: '', areaCheck: null,
+    choiceForm: null, choiceNote: '', choiceCost: '', choiceMsg: '', confirmRemove: null, addOpen: false, addDraft: '',
+    dayForm: null, dayDraft: '', dayAlts: null, adjSuggest: null,
   };
 }
 
@@ -100,14 +102,47 @@ export function applyAdjustment(d, changes) {
   const j = state.j;
   const updated = Object.assign({}, j.updated), decided = Object.assign({}, j.decided);
   for (const c of changes) {
-    updated[c.key] = `changed by "${d.request}"`;
+    updated[c.key] = d.request ? `changed by "${d.request}"` : d.title;
     if (c.itemChanged) decided[c.key] = false;
   }
+  const keys = new Set(d.plan.stops.map((s) => s.key));
+  for (const k of Object.keys(decided)) if (!keys.has(k)) delete decided[k];
+  for (const s of d.plan.stops) if (s.status !== 'open') decided[s.key] = true;
   state.plan = d.plan;
   state.profile = d.plan.profile;
   state.diff = null;
-  state.j = Object.assign({}, j, { chosen: d.chosen, ripples: d.ripples, updated, decided });
+  state.j = Object.assign({}, j, { chosen: d.chosen, ripples: d.ripples, updated, decided,
+    stopIdx: Math.min(j.stopIdx, d.plan.stops.length) });
   untick(changes.filter((c) => c.itemChanged).map((c) => c.key));
+  const ticks = Object.assign({}, state.ticks);  // tasks of removed stops go with them
+  for (const k of Object.keys(ticks)) if (!keys.has(k) && !d.plan.tasks.some((t) => t.id === k)) delete ticks[k];
+  state.ticks = ticks;
+}
+
+/** The user shapes a stop: skip it, mark it as already covered, or do it their own way.
+    Any of these counts as decided; "open" brings the plan's suggestion back. */
+export function setStopStatus(key, status, note = '', cost = null) {
+  const plan = state.plan;
+  state.plan = Object.assign({}, plan, { stops: plan.stops.map((s) => (s.key === key
+    ? Object.assign({}, s, { status, note: status === 'open' || status === 'skip' ? '' : String(note || '').slice(0, 160),
+      user_cost: status === 'have' || status === 'own' ? (cost == null || cost === '' ? null : Math.max(0, Math.round(Number(cost)) || 0)) : null })
+    : s)) });
+  const j = state.j;
+  state.j = Object.assign({}, j, { decided: Object.assign({}, j.decided, { [key]: status !== 'open' }) });
+  untick([key]);
+}
+
+/** A moment on the event day: keep, skip, already sorted, or the user's own words. */
+export function setItemStatus(id, status, mine = '') {
+  state.plan = Object.assign({}, state.plan, { days: state.plan.days.map((d) => Object.assign({}, d, {
+    items: d.items.map((it) => (it.id === id ? Object.assign({}, it, { status, mine: status === 'have' || status === 'own' ? String(mine || '').slice(0, 160) : '' }) : it)) })) });
+}
+
+/** Swap a moment for one of its suggested alternatives (the old title goes into the alternatives). */
+export function pickItemAlt(id, alt) {
+  state.plan = Object.assign({}, state.plan, { days: state.plan.days.map((d) => Object.assign({}, d, {
+    items: d.items.map((it) => (it.id === id ? Object.assign({}, it, { title: alt, status: 'keep', mine: '',
+      alts: [it.title, ...(it.alts || []).filter((a) => a !== alt)] }) : it)) })) });
 }
 
 export function toggleTick(id) {

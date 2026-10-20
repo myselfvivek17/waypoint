@@ -63,6 +63,7 @@ LABELS = {
     "banquet_hall": "Banquet hall", "park": "Park", "garden": "Garden", "hotel": "Hotel",
     "resort": "Resort", "bakery": "Bakery", "confectionery": "Sweet shop", "pastry": "Pastry shop",
     "parking": "Parking", "fast_food": "Quick bites", "guest_house": "Guest house",
+    "place_of_worship": "Temple",
 }
 OUTDOOR = {"park", "garden"}
 NEARBY_GROUP = {"restaurant": "food", "cafe": "food", "fast_food": "food", "parking": "park",
@@ -248,6 +249,8 @@ def parse_overpass(payload: dict | None, center: Point) -> list[Place]:
         lat = el.get("lat", (el.get("center") or {}).get("lat"))
         lon = el.get("lon", (el.get("center") or {}).get("lon"))
         kind = next((tags[k] for k in ("amenity", "leisure", "tourism", "shop") if tags.get(k) in LABELS), None)
+        if kind == "place_of_worship" and tags.get("religion") != "hindu":
+            continue
         if not name or lat is None or lon is None or not kind or not el.get("id"):
             continue
         pid = f"{el.get('type', 'node')}/{el['id']}"
@@ -285,7 +288,8 @@ def _venue_query(c: Point, radius: int) -> str:
         f'nwr{a}["leisure"~"^(park|garden)$"]["name"];'
         f'nwr{a}["tourism"~"^(hotel|resort)$"]["name"];'
         f'nwr{a}["shop"~"^(bakery|confectionery|pastry)$"]["name"];'
-        ");out center tags 200;"
+        f'nwr{a}["amenity"="place_of_worship"]["religion"="hindu"]["name"];'
+        ");out center tags 240;"
     )
 
 
@@ -377,6 +381,11 @@ def venue_candidates(ps: PlaceSet, guests: int | None, limit: int = 12) -> list[
     rows = [p for p in ps.places if p.kind in kinds and (p.capacity is None or p.capacity >= (guests or 0))]
     rows.sort(key=lambda p: (kinds.index(p.kind) > 2, p.dist_km))
     return rows[:limit]
+
+
+def temple_candidates(ps: PlaceSet, limit: int = 3) -> list[Place]:
+    """Temples near the area, where the host can ask for a poojari (never a named person)."""
+    return [p for p in ps.places if p.kind == "place_of_worship"][:limit]
 
 
 def bakery_candidates(ps: PlaceSet, limit: int = 4) -> list[Place]:

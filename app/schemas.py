@@ -13,7 +13,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
 
 EventType = Literal["birthday", "wedding", "house-warming", "community", "other"]
-Source = Literal["ai", "mock", "fallback"]
+Source = Literal["ai", "mock", "fallback", "rules"]  # "rules": a deterministic change the user asked for
 
 MAX_TEXT = 500
 
@@ -135,6 +135,7 @@ class Option(BaseModel):
     reason: str = ""
     why: str = ""
     place_id: str | None = None
+    place_kind: str | None = None  # the OSM kind of a real place (cafe, banquet_hall, …)
     where: str | None = None
     dist_km: float | None = None
     lat: float | None = None
@@ -144,6 +145,21 @@ class Option(BaseModel):
     tone: str = "dusk"
 
 
+# How the user wants a stop handled: the plan's pick ("open"), left out ("skip"), already covered
+# by the user ("have", optionally with who and what it costs) or done their own way ("own", their
+# words kept verbatim).
+StopStatus = Literal["open", "skip", "have", "own"]
+ItemStatus = Literal["keep", "skip", "have", "own"]
+
+
+class Mode(BaseModel):
+    """One way of doing a stop (cook at home, a home caterer, …) with the rule that explains it."""
+
+    id: str
+    label: str
+    why: str = ""
+
+
 class Stop(BaseModel):
     key: str
     label: str
@@ -151,6 +167,14 @@ class Stop(BaseModel):
     nophoto_msg: str = ""
     rec: Option
     options: list[Option]
+    status: StopStatus = "open"
+    note: str = Field("", max_length=160)
+    user_cost: int | None = Field(None, ge=0, le=500_000_000)
+    mode: str | None = None
+    modes: list[Mode] = []
+    custom: bool = False   # added by the user
+    verb: str = ""         # task wording when it differs from the stop's usual one
+    lead: int | None = None  # days ahead to book, when a mode or an added stop changes it
 
 
 class DayItem(BaseModel):
@@ -158,6 +182,11 @@ class DayItem(BaseModel):
     title: str
     note: str = ""
     art: Literal["arrive", "games", "cake", "dinner", "music", "ritual"] = "arrive"
+    id: str = ""
+    stop: str | None = None  # the stop this moment depends on (the cake moment needs the cake)
+    status: ItemStatus = "keep"
+    mine: str = Field("", max_length=160)  # "I already have this" / "Write my own": the user's words
+    alts: list[str] = []  # other ways to do this moment
 
 
 class Day(BaseModel):

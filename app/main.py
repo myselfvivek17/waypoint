@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parent
 if os.getenv("WP_NO_DOTENV") != "1":
     load_dotenv(ROOT.parent / ".env")
 
-from . import intake, llm, places, planner  # noqa: E402  (env must be loaded first)
+from . import choices, intake, llm, places, planner  # noqa: E402  (env must be loaded first)
 from .schemas import PhotoHint, Plan, Profile, Strict  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -190,10 +190,18 @@ async def plan(body: PlanIn, request: Request) -> Plan | JSONResponse:
         return JSONResponse({"error": b.block.title, "block": b.block.model_dump(mode="json")}, status_code=409)
 
 
-@app.post("/api/adjust", response_model=planner.AdjustOut)
-async def adjust(body: planner.AdjustIn, request: Request) -> planner.AdjustOut:
+@app.post("/api/adjust", response_model=choices.AdjustOut)
+async def adjust(body: choices.AdjustIn, request: Request) -> choices.AdjustOut:
+    """A change in words: the model (or the rules parser) proposes operations; code applies them."""
     limiter.check(request, "adjust")
-    return await planner.adjust(body, planner.today())
+    return await choices.adjust(body, planner.today())
+
+
+@app.post("/api/apply", response_model=choices.AdjustOut)
+async def apply_ops(body: choices.ApplyIn, request: Request) -> choices.AdjustOut:
+    """Operations from the UI (a stop's way of doing it, add or remove a stop), no model involved."""
+    limiter.check(request, "adjust")
+    return await choices.apply(body, planner.today())
 
 
 class NearbyPlace(BaseModel):

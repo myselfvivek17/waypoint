@@ -50,10 +50,11 @@ export async function sendChat(message, asked, edit = false) {
     transcript.push({ field: asked || null, q: (asked ? state.chat.reply : OPENING_Q).slice(0, 300), a: message.slice(0, 300) });
   }
   const hadArea = state.profile.area, hadPoint = JSON.stringify(state.profile.point || null);
-  const changed = JSON.stringify(out.profile) !== JSON.stringify(state.profile);
+  // the plan is out of date when the details now differ from the ones it was made with
+  const changed = !!state.plan && JSON.stringify(out.profile) !== JSON.stringify(state.plan.profile);
   update({
     busy: false, draft: '', editing: null, profile: out.profile,
-    planDirty: state.planDirty || (!!state.plan && changed),
+    planDirty: changed,
     chat: { transcript: transcript.slice(-16), ask: out.ask, reply: out.reply, chips: out.chips || [],
       placeholder: out.placeholder || '', done: out.done, block: out.block, remaining: out.remaining, source: out.source,
       // keep the model's own summary until an edit replaces it with the rules' one
@@ -87,7 +88,7 @@ export function useMyLocation() {
     if (!r.ok) { update({ locBusy: false, locMsg: errorText(r) }); return; }
     const area = r.data.area;
     const answering = state.chat.ask === 'area' && !state.chat.done;
-    state.profile = Object.assign({}, state.profile, { point: { lat, lon, label: area }, from_me: true });
+    state.profile = Object.assign({}, state.profile, { area, point: { lat, lon, label: area }, from_me: true });
     update({ locBusy: false, locMsg: '' }, { render: false });
     await sendChat(area, 'area', !answering);
     say(`Searching around ${area}. Not right? Edit the area.`);
@@ -379,11 +380,12 @@ function fieldRow(key, label, placeholder, p) {
   }
   return h('div', { class: 'drow' },
     h('dt', null, label),
-    h('dd', null, val || h('span', { class: 'tt2' }, key === 'have' ? 'Nothing yet: tell me what is already sorted.' : 'Not set'),
-      key === 'area' && p.area ? areaNote(p) : null),
-    h('button', { class: 'linkb', id: 'ed-' + key, type: 'button',
-      onClick: () => update({ editing: key, editDraft: rawValue(key, p) }, { focus: key === 'type' ? null : 'ed-in' }) },
-    val ? 'Edit' : 'Add', h('span', { class: 'sr' }, ' ' + label)));
+    h('dd', null,
+      h('div', { class: 'dval' }, val || h('span', { class: 'tt2' }, key === 'have' ? 'Nothing yet: tell me what is already sorted.' : 'Not set'),
+        key === 'area' && p.area ? areaNote(p) : null),
+      h('button', { class: 'linkb', id: 'ed-' + key, type: 'button',
+        onClick: () => update({ editing: key, editDraft: rawValue(key, p) }, { focus: key === 'type' ? null : 'ed-in' }) },
+      val ? 'Edit' : 'Add', h('span', { class: 'sr' }, ' ' + label))));
 }
 
 function detailsView() {

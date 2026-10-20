@@ -93,6 +93,161 @@ TASK_VERBS = {
     "music": "Book the music", "puja": "Book the priest and samagri", "sound": "Book sound and stage",
 }
 
+# ---- user choice: ways of doing a stop. (id, label, budget multiplier, days ahead, task verb, why)
+MODES: dict[str, list[tuple[str, str, float, int, str, str]]] = {
+    "food": [
+        ("caterer", "Caterer", 1.0, 10, "Confirm the caterer",
+         "A caterer brings the food, the cooks and the serving staff: the usual choice."),
+        ("home", "Cook at home", .45, 3, "Plan the menu and buy groceries",
+         "Cooking at home costs about half (groceries and a helper) but needs a kitchen and two days of prep."),
+        ("home_caterer", "Home caterer", .8, 7, "Confirm the home caterer",
+         "A home caterer cooks in their own kitchen and delivers: cheaper than a full caterer, no serving staff."),
+        ("restaurant", "Restaurant", 1.1, 10, "Reserve the restaurant",
+         "At a restaurant the food and the space come together, so the venue costs little more than the booking."),
+        ("hall", "Convention-hall catering", 1.2, 30, "Confirm the hall's caterer",
+         "The hall's own caterer makes big groups easy, but halls book out early, so it needs a month's notice."),
+    ],
+    "venue": [
+        ("hall", "Rented hall", 1.0, 21, "Book the hall",
+         "A hall gives space, seating and power in one booking."),
+        ("home", "At home", .3, 5, "Arrange seating and a canopy",
+         "At home the budget only covers rented chairs, a canopy and cleaning help."),
+        ("restaurant", "Restaurant", .5, 10, "Reserve the restaurant",
+         "A restaurant's private area: the booking is small because the food bill covers the space."),
+        ("outdoor", "Outdoor", .8, 21, "Book the garden or lawn",
+         "A park, garden or lawn: open sky and room, but it needs a weather backup."),
+    ],
+    "puja": [
+        ("need", "Need a poojari near me", 1.0, 21, "Ask the temple about a poojari",
+         "I look up temples near you on OpenStreetMap; ask there for a poojari. I never suggest a person by name."),
+        ("have", "Already have one", 0.0, 7, "Confirm the time with your poojari",
+         "Your own poojari leads the puja; only the samagri and flowers are left to buy."),
+    ],
+}
+MODE_STOPS = {"poojari": "puja"}  # added stops that share a stop's modes
+# When a stop's mode changes, another stop may have to follow: (stop, mode) -> [(other stop, mode, why)].
+MODE_EFFECTS: dict[tuple[str, str], list[tuple[str, tuple[str, ...], str, str]]] = {
+    # (other stop, modes it may keep, mode to switch to, why)
+    ("food", "restaurant"): [("venue", ("restaurant",), "restaurant", "Food at a restaurant means the restaurant is the venue.")],
+    ("food", "hall"): [("venue", ("hall",), "hall", "The hall's caterer serves at the hall, so the venue is a hall.")],
+    ("venue", "home"): [("food", ("caterer", "home", "home_caterer"), "home_caterer",
+                         "A party at home needs food cooked there or brought in, not a restaurant or a hall's caterer.")],
+    ("venue", "restaurant"): [("food", ("restaurant",), "restaurant", "At a restaurant the restaurant serves the food.")],
+    ("venue", "outdoor"): [("food", ("caterer", "home_caterer"), "caterer", "An outdoor venue needs a caterer who brings everything.")],
+}
+
+# Stops the user can add: key -> (label, pattern, share of budget or per-guest price, per guest?, days ahead,
+# task verb, [(kind, name, price factor, reason)], photo search)
+EXTRA_STOPS: dict[str, tuple] = {
+    "photographer": ("Photographer", r"photo|camera|video", .08, False, 21, "Book the photographer",
+                     [("Recommended", "Photographer for three hours, edited album", 1.0, "Candid and posed shots of everyone."),
+                      ("Cheaper", "A friend with a good camera, you edit", .25, "Free, but someone misses the party."),
+                      ("Different vibe", "Candid photographer plus a one-minute film", 1.7, "A short film to share the next day.")],
+                     "event photographer"),
+    "mehendi": ("Mehendi artist", r"mehendi|mehndi|henna", .05, False, 21, "Book the mehendi artist",
+                [("Recommended", "Mehendi artist for the hosts and close family", 1.0, "Two artists for about four hours."),
+                 ("Cheaper", "One artist, simple designs", .5, "Quick designs for everyone who wants one."),
+                 ("Different vibe", "Bridal-style mehendi with an assistant", 1.8, "Detailed designs and a second artist.")],
+                "mehendi henna"),
+    "gifts": ("Return gifts", r"return gift|gift|favou?r", 120, True, 10, "Order the return gifts",
+              [("Recommended", "Small useful return gift for each family", 1.0, "A plant, a sweet box or a diya set."),
+               ("Cheaper", "Sweet box for each guest", .6, "Simple, and everyone likes it."),
+               ("Different vibe", "Personalised keepsake", 2.0, "Printed with the date and a name.")],
+              "gift boxes"),
+    "dj": ("DJ & music", r"\bdj\b|playlist|band|music", .08, False, 14, "Book the DJ",
+           [("Recommended", "DJ with lights for three hours", 1.0, "A dance floor that fills itself."),
+            ("Cheaper", "Your playlist on a rented speaker", .25, "A friend runs the music."),
+            ("Different vibe", "Live acoustic duo", 1.5, "Bollywood unplugged, then the playlist.")],
+           "dj party"),
+    "decor_lights": ("Lights", r"light|fairy|lamp|diya", .05, False, 7, "Order the lights",
+                     [("Recommended", "Fairy lights and lanterns", 1.0, "Warm light along the walls and tables."),
+                      ("Cheaper", "Borrowed string lights and diyas", .4, "Ask family; buy only the diyas."),
+                      ("Different vibe", "Marigold-and-light canopy", 1.6, "A canopy of light over the main area.")],
+                     "fairy lights"),
+    "makeup": ("Makeup artist", r"make-?up|salon|hair", .06, False, 14, "Book the makeup artist",
+               [("Recommended", "Makeup artist for the hosts", 1.0, "At home, two hours before guests arrive."),
+                ("Cheaper", "Salon visit the same morning", .5, "Go to a salon nearby."),
+                ("Different vibe", "Makeup and hair for the whole family", 2.0, "Everyone camera-ready.")],
+               "makeup"),
+    "anchor": ("Anchor", r"anchor|emcee|\bmc\b|host", .06, False, 14, "Book the anchor",
+               [("Recommended", "Anchor for games and speeches", 1.0, "Keeps the evening moving."),
+                ("Cheaper", "A cousin with a mic and a script", .1, "Free, and personal."),
+                ("Different vibe", "Anchor plus a magician for the kids", 1.8, "Something for the children.")],
+               "stage anchor"),
+    "poojari": ("Poojari", r"poojari|pujari|pandit|priest|purohit|panditji", .08, False, 21, "Ask the temple about a poojari",
+                [("Recommended", "A poojari from a temple near you", 1.0, "Ask at the temple; dakshina and samagri included."),
+                 ("Cheaper", "Short ceremony, samagri bought yourself", .6, "The poojari only; you shop for samagri.")],
+                "puja"),
+    "cake": ("Cake", r"cake", .06, False, 5, "Order the cake",
+             [("Recommended", "Classic cake for everyone", 1.0, "About 1 kg for every 12 guests."),
+              ("Cheaper", "Pineapple cake", .7, "Plain and classic."),
+              ("Different vibe", "Smaller cake plus cupcakes", 1.3, "Easy to hand round.")],
+             "birthday cake"),
+    "transport": ("Transport", r"transport|cab|bus|car|pick-?up", .06, False, 7, "Book the transport",
+                  [("Recommended", "Two cabs for elders, on call", 1.0, "Pick-up and drop for those who need it."),
+                   ("Cheaper", "Share a list of who can give lifts", .1, "Friends drive each other."),
+                   ("Different vibe", "A mini-bus from one meeting point", 1.6, "Everyone arrives together.")],
+                  "minibus"),
+}
+
+# Words people use for a stop -> the stop keys that can mean (first one present wins).
+SYNONYMS: list[tuple[str, tuple[str, ...]]] = [
+    (r"cake|cupcake", ("cake",)),
+    (r"poojari|pujari|pandit|priest|purohit|puja|pooja|havan", ("puja", "poojari")),
+    (r"cater|food|meal|lunch|dinner|menu|cook|thali|buffet", ("food",)),
+    (r"venue|hall|place|space|location|banquet", ("venue",)),
+    (r"decor|decoration|theme|flowers?", ("theme",)),
+    (r"invit|card", ("invites",)),
+    (r"\bdj\b|music|band|playlist", ("music", "dj", "sound")),
+    (r"sound|speaker|stage|mic", ("sound", "music", "dj")),
+    (r"schedule|run-?sheet|timeline|day-of|coordinator", ("day",)),
+    (r"photo|camera", ("photographer",)),
+    (r"mehendi|mehndi|henna", ("mehendi",)),
+    (r"gift", ("gifts",)),
+    (r"make-?up", ("makeup",)),
+    (r"anchor|emcee", ("anchor",)),
+]
+
+# Other ways to do a moment on the event day, by its kind.
+DAY_ALTS = {
+    "arrive": ["Welcome drinks at the door", "Family greets each guest", "Photo corner as guests arrive"],
+    "games": ["Antakshari", "Quiz in two teams", "Photo booth with props", "Dumb charades"],
+    "cake": ["Dessert table instead of a cake", "Mithai platter", "Ice-cream counter"],
+    "dinner": ["Buffet", "Served thali at the table", "Live chaat and dosa counters"],
+    "music": ["Playlist and dancing", "Open mic for friends", "Live singer for an hour"],
+    "ritual": ["Short puja with family", "Aarti together", "Blessings from the elders"],
+}
+DAY_STOP = {"cake": "cake", "ritual": "puja", "music": "music", "dinner": "food"}  # moment kind -> stop it needs
+
+
+def find_stop(text: str, keys: list[str]) -> str | None:
+    """Which of the plan's stops the words refer to (by key, then by synonym)."""
+    low = text.lower()
+    for k in keys:
+        if re.search(rf"\b{re.escape(k)}\b", low):
+            return k
+    for pat, cands in SYNONYMS:
+        if re.search(pat, low):
+            hit = next((c for c in cands if c in keys), None)
+            if hit:
+                return hit
+    return None
+
+
+def extra_stop(text: str) -> str | None:
+    """The catalogue entry that matches what the user wants to add, if any."""
+    low = text.lower()
+    return next((k for k, row in EXTRA_STOPS.items() if re.search(row[1], low)), None)
+
+
+def modes_for(key: str) -> list[tuple[str, str, float, int, str, str]]:
+    return MODES.get(MODE_STOPS.get(key, key), [])
+
+
+def mode_row(key: str, mode: str | None) -> tuple[str, str, float, int, str, str] | None:
+    return next((m for m in modes_for(key) if m[0] == mode), None)
+
+
 # (min_days_left_inclusive, urgency, advice). First match from the top wins.
 URGENCY = [
     (60, "relaxed", "Plenty of time. Lock the venue first, then the rest can follow at an easy pace."),

@@ -328,11 +328,14 @@ def invite(p: Profile, start: str) -> str:
     return "\n".join(lines)
 
 
-def draft_plan(p: Profile, r: RulesResult, venues: list[Place], bakeries: list[Place]) -> DraftPlan:
+def draft_plan(p: Profile, r: RulesResult, venues: list[Place], bakeries: list[Place],
+               temples: list[Place] | None = None) -> DraftPlan:
     """A complete, deterministic draft in the same shape the model is asked for."""
     stops: list[DraftStop] = []
     for key, _ in rules.stops_for(p.type):
-        if key == "venue":
+        if key == "puja":
+            stops.append(puja_stop(p, r, key, temples or [], (p.budget or 0) * r.split[key]))
+        elif key == "venue":
             stops.append(venue_stop(p, r, venues))
         elif key == "theme":
             stops.append(theme_stop(p, r))
@@ -344,3 +347,139 @@ def draft_plan(p: Profile, r: RulesResult, venues: list[Place], bakeries: list[P
             stops.append(simple_stop(key, p, r))
     d = days(p, r)
     return DraftPlan(stops=stops, days=d, invite=invite(p, d[0].items[0].time))
+
+
+# ------------------------------------------------------------------ user choice: modes and added stops
+
+VENUE_KINDS = {"hall": ("banquet_hall", "community_centre", "events_venue", "conference_centre", "hotel", "resort"),
+               "restaurant": ("restaurant", "cafe"), "outdoor": ("park", "garden")}
+
+
+def default_mode(key: str, p: Profile, venue_kind: str | None) -> str | None:
+    """The mode a fresh plan starts in, read from what the plan already proposes."""
+    if key == "venue":
+        if p.type == "house-warming":
+            return "home"
+        return {"cafe": "restaurant", "restaurant": "restaurant", "park": "outdoor", "garden": "outdoor"}.get(
+            venue_kind or "", "hall")
+    if key == "food":
+        return "restaurant" if venue_kind in ("cafe", "restaurant") else "caterer"
+    if key in ("puja", "poojari"):
+        return "need"
+    return None
+
+
+def food_mode_stop(p: Profile, r: RulesResult, mode: str) -> DraftStop:
+    """Food for a chosen way of doing it; per-guest rates follow the mode's budget multiplier."""
+    base = food_stop(p, r)
+    if mode == "caterer":
+        return base
+    row = rules.mode_row("food", mode)
+    mult = row[2] if row else 1.0
+    guests = max(1, p.guests or 1)
+    rate = _r5((p.budget or 0) * r.split["food"] / guests * mult)
+    veg = "veg " if is_veg(p) else ""
+    jain = " with a Jain-safe dish or two" if "jain" in p.food.lower() else ""
+    names = {
+        "home": (f"Home-cooked {veg}menu{jain}, with a helper", "Potluck: family brings a dish each",
+                 "Home cooking plus one live chaat counter", "Indian home cooked food"),
+        "home_caterer": (f"Home caterer: {veg}thali{jain}", "Home caterer, simple meal box",
+                         "Home caterer with a live dosa counter", "thali"),
+        "restaurant": (f"Set {veg}menu at the restaurant{jain}", "Fixed thali at the restaurant",
+                       "Buffet at the restaurant", "restaurant buffet"),
+        "hall": (f"Hall caterer: {veg}buffet{jain}", "Hall caterer, limited buffet",
+                 "Hall caterer with live counters", "Indian wedding buffet"),
+    }[mode]
+    why = row[5] if row else ""
+    return DraftStop(key="food", pick=DraftOption(name=names[0], price=rate, why=why, photo_query=names[3],
+                                                  reason=f"{guests} guests{', all vegetarian' if veg else ''}."),
+                     options=[DraftOption(kind="Cheaper", name=names[1], price=_r5(rate * .65),
+                                          reason="Less to cook, still a proper meal.", photo_query=names[3]),
+                              DraftOption(kind="Different vibe", name=names[2], price=_r5(rate * 1.3),
+                                          reason="Something to gather round.", photo_query="chaat")])
+
+
+def venue_mode_stop(p: Profile, r: RulesResult, mode: str, cands: list[Place]) -> DraftStop:
+    """Venue for a chosen way of doing it: real places of the right kind, or a described space."""
+    row = rules.mode_row("venue", mode)
+    line = (p.budget or 0) * r.split["venue"] * (row[2] if row else 1.0)
+    where = area_short(p)
+    if mode == "home":
+        return DraftStop(key="venue", pick=DraftOption(
+            name="Your home, living room and terrace", price=_r100(line),
+            reason=f"Set up for {p.guests or 'your'} guests with rented chairs and a canopy if needed.",
+            why=row[5] if row else ""),
+            options=[DraftOption(kind="Cheaper", name="Home, with borrowed seating", price=_r100(line * .5),
+                                 reason="Neighbours' chairs and durries; only cleaning help is hired."),
+                     DraftOption(kind="Different vibe", name="Home plus the building clubhouse", price=_r100(line * 1.8),
+                                 reason="Guests spread out; the clubhouse is usually a small booking.")])
+    kinds = VENUE_KINDS.get(mode, ())
+    fit = [c for c in cands if c.kind in kinds]
+    if not fit:
+        generic = {"hall": f"A community or banquet hall near {where}",
+                   "restaurant": f"A restaurant's private area near {where}",
+                   "outdoor": f"A park or garden near {where}"}[mode]
+        return DraftStop(key="venue", pick=DraftOption(name=generic, price=_r100(line), outdoor=mode == "outdoor",
+                                                       reason="The kind of place to look for.",
+                                                       why=row[5] if row else ""),
+                         options=[DraftOption(kind="Cheaper", name=f"A smaller {generic[2:]}", price=_r100(line * .7),
+                                              reason="A smaller room costs less.", outdoor=mode == "outdoor")])
+    rec, rest = fit[0], fit[1:]
+    opts = []
+    cheaper = next((c for c in rest if KIND_PRICE.get(c.kind, 1) <= KIND_PRICE.get(rec.kind, 1)), None)
+    if cheaper:
+        opts.append(_place_option(cheaper, "Cheaper", line * .8, "Simpler, so it costs less."))
+    closer = next((c for c in rest if c.dist_km < rec.dist_km and c is not cheaper), None)
+    if closer:
+        opts.append(_place_option(closer, "Closer", line, "Closer to the centre of the area."))
+    vibe = next((c for c in rest if c is not cheaper and c is not closer), None)
+    if vibe:
+        opts.append(_place_option(vibe, "Different vibe", line * 1.1, "A different feel from the first pick."))
+    pick = _place_option(rec, "", line, f"Fits {p.guests or 'your'} guests.")
+    pick.why = row[5] if row else ""
+    return DraftStop(key="venue", pick=pick, options=opts)
+
+
+def puja_stop(p: Profile, r: RulesResult, key: str, temples: list[Place], line: float) -> DraftStop:
+    """A poojari found by asking at a real temple nearby. A person is never named."""
+    t0 = temples[0] if temples else None
+    pick = DraftOption(name="Puja with a poojari from a temple near you", price=_r100(line), place_id=t0.id if t0 else "",
+                       reason=(f"Ask at {t0.name}, {t0.dist_km} km away, for a poojari and the samagri list."
+                               if t0 else "Ask at your nearest temple for a poojari and the samagri list."),
+                       why=rules.mode_row(key, "need")[5], photo_query="puja flowers")
+    opts = [DraftOption(kind="Cheaper", name="Short puja, samagri bought yourself", price=_r100(line * .6),
+                        reason="The poojari only; you shop for samagri.", photo_query="diya")]
+    if len(temples) > 1:
+        t1 = temples[1]
+        opts.append(DraftOption(kind="Closer" if t1.dist_km < t0.dist_km else "Different vibe",
+                                name="Puja with a poojari from another temple", price=_r100(line), place_id=t1.id,
+                                reason=f"Ask at {t1.name}, {t1.dist_km} km away.", photo_query="temple"))
+    else:
+        opts.append(DraftOption(kind="Different vibe", name="Puja plus a havan and bhajan group", price=_r100(line * 1.5),
+                                reason="A fuller morning with music.", photo_query="havan"))
+    return DraftStop(key=key, pick=pick, options=opts)
+
+
+def extra_stop(key: str, name: str, p: Profile) -> tuple[str, DraftStop, int, str, bool]:
+    """(label, draft, lead days, task verb, per guest) for a stop the user adds.
+
+    Known kinds come from the catalogue; anything else becomes a stop with the user's own
+    label and a modest estimate (3% of the budget), clearly described as an estimate.
+    """
+    budget = p.budget or 0
+    if key in rules.EXTRA_STOPS:
+        label, _pat, share, per_guest, lead, verb, rows, query = rules.EXTRA_STOPS[key]
+        line = share if per_guest else budget * share
+        price = (lambda f: _r5(line * f)) if per_guest else (lambda f: _r100(line * f))
+        (k0, n0, f0, why0), *alts = rows
+        pick = DraftOption(name=n0, price=price(f0), reason=why0, photo_query=query,
+                           why=(f"About {inr(line)} a guest." if per_guest else
+                                f"Sized at about {round(share * 100)}% of the budget for an event like this."))
+        return label, DraftStop(key=key, pick=pick, options=[DraftOption(kind=k, name=n, price=price(f), reason=w,
+                                                                         photo_query=query) for k, n, f, w in alts]), \
+            lead, verb, per_guest
+    label = name.strip()[:40].strip(" .,") or "Something extra"
+    label = label[0].upper() + label[1:]
+    pick = DraftOption(name=label, price=_r100(budget * .03), reason="Added by you.",
+                       why="An estimate (about 3% of the budget) until you get a real quote.")
+    return label, DraftStop(key=key, pick=pick, options=[]), 14, f"Arrange {label.lower()}", False
