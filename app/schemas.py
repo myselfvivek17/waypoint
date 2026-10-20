@@ -115,6 +115,8 @@ class Option(BaseModel):
     place_id: str | None = None
     where: str | None = None
     dist_km: float | None = None
+    lat: float | None = None
+    lon: float | None = None
     ripple: list[Ripple] = []
     photo: PhotoHint | None = None
     tone: str = "dusk"

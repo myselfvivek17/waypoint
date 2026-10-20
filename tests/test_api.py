@@ -177,3 +177,11 @@ def test_places_needs_area_or_point():
 def test_unknown_route_has_no_stack_trace():
     r = client.get("/api/nope")
     assert r.status_code == 404 and "Traceback" not in r.text
+
+
+def test_plan_without_ai_is_labelled_fallback(no_places, aditya, monkeypatch):
+    async def boom(*a, **k):
+        raise AssertionError("model called")
+    monkeypatch.setattr(planner.llm, "ask", boom)
+    r = client.post("/api/plan", json={"profile": aditya.model_dump(mode="json"), "ai": False})
+    assert r.status_code == 200 and r.json()["source"] == "fallback"

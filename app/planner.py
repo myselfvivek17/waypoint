@@ -167,6 +167,7 @@ def make_option(d: DraftOption, *, key: str, oid: str, kind: str, p: Profile, ps
         reason=clip(d.reason, CAPS["reason"]) or clip(fallback.reason, CAPS["reason"]),
         why=clip(d.why, CAPS["why"]) or clip(fallback.why, CAPS["why"]),
         place_id=place.id if place else None, where=where, dist_km=place.dist_km if place else None,
+        lat=place.lat if place else None, lon=place.lon if place else None,
         photo=photo, tone=_tone(oid + name),
     )
 
@@ -322,8 +323,11 @@ def plan_request(p: Profile, r: RulesResult, venues: list[Place], bakeries: list
     }
 
 
-async def build_plan(p: Profile, now: dt.date) -> Plan:
-    """The full draft plan: rules, real places, one model call, validators."""
+async def build_plan(p: Profile, now: dt.date, use_ai: bool = True) -> Plan:
+    """The full draft plan: rules, real places, one model call, validators.
+
+    ``use_ai=False`` skips the model and returns the labelled rule-based plan (offline demo).
+    """
     r = rules.evaluate(p, now)
     if r.blocks:
         raise Blocked(r.blocks[0])
@@ -331,6 +335,8 @@ async def build_plan(p: Profile, now: dt.date) -> Plan:
     venues = templates.rank_venues(places.venue_candidates(ps, p.guests), p, r)
     bakeries = places.bakery_candidates(ps)
     fb = templates.draft_plan(p, r, venues, bakeries)
+    if not use_ai:
+        return assemble(fb, fb, p, r, ps, now, "fallback")
     res = await llm.ask("plan", INSTRUCTIONS, plan_request(p, r, venues, bakeries), DraftPlan,
                         fallback=lambda: fb, max_tokens=3500)
     return assemble(res.value, fb, p, r, ps, now, res.source)

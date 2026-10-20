@@ -168,6 +168,7 @@ async def chat(body: intake.ChatIn, request: Request) -> intake.ChatOut:
 
 class PlanIn(Strict):
     profile: Profile
+    ai: bool = True  # False: the rule-based plan only (the "AI offline" state)
 
 
 @app.post("/api/plan", response_model=Plan)
@@ -178,7 +179,7 @@ async def plan(body: PlanIn, request: Request) -> Plan | JSONResponse:
     if missing:
         return JSONResponse({"error": "Some details are missing.", "fields": missing}, status_code=422)
     try:
-        return await planner.build_plan(p, planner.today())
+        return await planner.build_plan(p, planner.today(), use_ai=body.ai)
     except planner.Blocked as b:
         return JSONResponse({"error": b.block.title, "block": b.block.model_dump(mode="json")}, status_code=409)
 

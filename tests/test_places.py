@@ -141,6 +141,7 @@ def test_valid_place_id_uses_the_real_name_not_the_models(aditya, venue_set):
     plan = _assemble(_venue_draft("node/1", "Olive Kitchen Rooftop Deluxe"), aditya, venue_set)
     rec = plan.stops[0].rec
     assert rec.place_id == "node/1" and rec.name == "Olive Kitchen" and rec.dist_km is not None
+    assert (rec.lat, rec.lon) == (17.4440, 78.3530)
 
 
 def test_no_places_gives_a_generic_unnamed_venue(aditya):
