@@ -6,7 +6,7 @@ import { h, inr, s, safeUrl } from './dom.js';
 import { chipDefs } from './intake.js';
 import { allOptions, budgetLine, lineTotal, maxReach, nextIndex, stopsModel, summary } from './model.js';
 import { chooseOption, confirmStop, state } from './store.js';
-import { announce, go, later, rerender, say, stopThinking, think, update } from './ui.js';
+import { announce, go, later, rerender, say, update } from './ui.js';
 
 const PHOTO_HOSTS = ['upload.wikimedia.org'];
 const PAGE_HOSTS = ['commons.wikimedia.org'];
@@ -98,8 +98,7 @@ function planStep() {
   const i = m.findIndex((x) => !x.decided);
   if (i < 0) {
     update({ planning: false, j: Object.assign({}, state.j, { stopIdx: m.length }) }, { focus: 'finale' });
-    stopThinking();
-    announce('Every stop is decided.');
+    say('Every stop is decided.');
     return;
   }
   update({ j: Object.assign({}, state.j, { stopIdx: i }), slide: 0, why: false, change: false, sheet: false });
@@ -114,7 +113,7 @@ function planStep() {
 function planRest() {
   if (state.planning) return;
   update({ planning: true, j: Object.assign({}, state.j, { view: 'path' }) });
-  think('Confirming my suggestions for the remaining stops…');
+  announce('Confirming my suggestions for the remaining stops.');
   planStep();
 }
 

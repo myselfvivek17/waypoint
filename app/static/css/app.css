@@ -10,7 +10,7 @@
  --ink:#16202A;--cream:#FBF4E6;--paper:#FFFBF2;--sand:#F1E5CB;--line:#D9CBAA;--muted:#5B5448;
  --saff:#9A4A0C;--mari:#E8A317;--on-mari:#16202A;--focus:#16202A;--danger:#8A2B0E;--good:#2F5B3A;
  --placeholder:#6B6356;--dash:#8E8268;--pri-hover:#2A3A48;--field:#FFFFFF;
- --stripe1:#C9B88F;--stripe2:#E4D6B3;--knob:#8E8268;--scrim:rgba(22,32,42,.5);
+ --stripe1:#C9B88F;--stripe2:#E4D6B3;--knob:#8E8268;--scrim:rgba(22,32,42,.5);--busy-scrim:rgba(251,244,230,.72);
  --np1:#F7EEDB;--np2:#F3E8D1;--ph:#E9DDC4;--bplan:#C9B88F;
  /* night panels: journey scene, "next up" card, sheet header accents */
  --night:#16202A;--night-2:#1E2D39;--night-3:#26394A;--on-night:#FBF4E6;--night-dim:#CFC8B8;--night-step:#F0C262;
@@ -23,7 +23,7 @@
  --ink:#F3EAD8;--cream:#11181F;--paper:#18222C;--sand:#223140;--line:#4A5C6C;--muted:#D2C9B8;
  --saff:#F2A65E;--mari:#E8A317;--on-mari:#16202A;--focus:#F3EAD8;--danger:#FF9C7A;--good:#93D3A2;
  --placeholder:#C4BBAA;--dash:#9A8F7C;--pri-hover:#FFFFFF;--field:#0E141A;
- --stripe1:#4A5A66;--stripe2:#33434F;--knob:#6F7D88;--scrim:rgba(0,0,0,.6);
+ --stripe1:#4A5A66;--stripe2:#33434F;--knob:#6F7D88;--scrim:rgba(0,0,0,.6);--busy-scrim:rgba(10,16,22,.7);
  --np1:#1B2631;--np2:#16202A;--ph:#22303C;--bplan:#55636E;
  --night:#0A1016;--night-2:#142028;--night-3:#1B2B37;--on-night:#F3EAD8;--night-dim:#CFC8B8;--night-step:#F0C262;
  --map-bg:#1C2833;--map-park:#26392F;--map-water:#1E3A44;--map-block:#24323E;--map-road:#33424F;--map-edge:#3D4D5A;
@@ -287,10 +287,24 @@ h1:focus-visible,h2:focus-visible{outline:3px solid var(--focus);outline-offset:
 .less{color:var(--good)}.more{color:var(--danger)}
 
 /* status */
-.pill{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:60;background:var(--night);color:var(--on-night);border-radius:999px;padding:12px 24px 12px 16px;display:flex;align-items:center;gap:12px;animation:rise .3s ease both;max-width:92vw}
-.pill[hidden],.toast[hidden]{display:none}
-.flame{animation:flicker 1.6s ease-in-out infinite;transform-origin:50% 90%}
-.toast{position:fixed;left:50%;bottom:84px;transform:translateX(-50%);z-index:60;background:var(--paper);border:2px solid var(--ink);border-radius:14px;padding:10px 20px;animation:rise .3s ease both;max-width:92vw}
+/* AI work: a calm, centred overlay with the journey motif */
+.busy{position:fixed;inset:0;z-index:70;display:grid;place-items:center;padding:20px;background:var(--busy-scrim);animation:fadein .3s ease both}
+.busy[hidden],.toast[hidden]{display:none}
+.busyin{width:min(460px,100%);text-align:center;padding:30px 28px 26px;border-radius:28px;background:var(--night);color:var(--on-night);box-shadow:0 24px 60px rgba(10,16,22,.35);animation:rise .4s ease both;--focus:var(--on-night)}
+.busyin:focus{outline:none}
+.busyart svg{width:min(300px,100%);height:auto;display:block;margin:0 auto 14px}
+.bm-base{fill:none;stroke:var(--on-night);stroke-opacity:.45;stroke-width:3;stroke-dasharray:2 9;stroke-linecap:round}
+.bm-path{fill:none;stroke:var(--mari);stroke-width:5;stroke-linecap:round;stroke-dasharray:1;stroke-dashoffset:1;animation:busydraw 2.4s cubic-bezier(.5,0,.2,1) infinite both}
+.bm-orig{fill:var(--mari)}
+.bm-node{fill:var(--night);stroke:var(--on-night);stroke-width:2.5;animation:busylight 2.4s ease infinite both}
+.bm-flame{animation:flicker 1.6s ease-in-out infinite;transform-box:fill-box;transform-origin:50% 90%}
+.busytx{font-size:24px;line-height:1.25;margin:0}
+.busysub{margin:8px 0 0;color:var(--night-dim);font-size:15px}
+.busysub:empty{display:none}
+@keyframes busydraw{0%{stroke-dashoffset:1}70%,100%{stroke-dashoffset:0}}
+@keyframes busylight{0%,15%{fill:var(--night);stroke:var(--on-night)}35%,100%{fill:var(--mari);stroke:var(--mari)}}
+/* confirmations: centred toast (translate, not transform, so the entry animation keeps it centred) */
+.toast{position:fixed;left:50%;bottom:32px;translate:-50% 0;z-index:60;background:var(--paper);border:2px solid var(--ink);border-radius:14px;padding:10px 20px;animation:rise .3s ease both;width:max-content;max-width:min(560px,92vw);text-align:center}
 
 /* day */
 .day,.plan{padding:36px 20px 120px}
@@ -356,7 +370,7 @@ h1:focus-visible,h2:focus-visible{outline:3px solid var(--focus);outline-offset:
 }
 @media print{
  :root{--ink:#16202A;--cream:#fff;--paper:#fff;--sand:#eee;--line:#bbb;--muted:#333;--night:#fff;--on-night:#16202A;--night-step:#9A4A0C}
- .hd,.acts,.pill,.toast,.chg,.jbar,.offb,.skip,.adjust,.next .btn,.sheetwrap{display:none!important}
+ .hd,.acts,.busy,.toast,.chg,.jbar,.offb,.skip,.adjust,.next .btn,.sheetwrap{display:none!important}
  .plangrid{grid-template-columns:1fr 1fr;gap:24px}
  .next{border:1.5px solid #bbb}
  .task input{accent-color:#16202A}
@@ -364,4 +378,7 @@ h1:focus-visible,h2:focus-visible{outline:3px solid var(--focus);outline-offset:
 }
 @media (prefers-reduced-motion:reduce){
  *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}
+ .bm-path{stroke-dashoffset:0}
+ .bm-node{animation:none!important;fill:var(--mari);stroke:var(--mari)}
+ .bm-flame{animation:none!important}
 }

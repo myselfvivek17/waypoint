@@ -26,9 +26,12 @@
 </header>
 <div id="view" tabindex="-1"></div>
 <div id="sheet-root"></div>
-<div id="pill" class="pill dark" role="status" hidden>
- <svg class="flame" width="22" height="28" viewBox="0 0 22 28" aria-hidden="true"><path d="M11 1c4 6 9 9 9 16a9 9 0 0 1-18 0c0-5 3-7 4-12 2 1 3 3 5-4z" fill="#E8A317"/><path d="M11 14c2 3 4 4 4 7a4 4 0 0 1-8 0c0-3 3-4 4-7z" fill="#FBF4E6"/></svg>
- <span id="pill-tx"></span>
+<div id="busy" class="busy" hidden>
+ <div class="busyin" id="busy-box" role="status" aria-live="polite" aria-atomic="true" tabindex="-1">
+  <div id="busy-art" class="busyart" aria-hidden="true"></div>
+  <p id="busy-tx" class="disp busytx"></p>
+  <p id="busy-sub" class="busysub"></p>
+ </div>
 </div>
 <div id="toast" class="toast" role="status" hidden></div>
 <div id="live" class="sr" aria-live="polite"></div>

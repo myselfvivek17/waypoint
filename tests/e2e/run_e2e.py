@@ -23,6 +23,7 @@ import urllib.request
 from pathlib import Path
 
 from playwright.sync_api import Page, expect, sync_playwright
+from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
 ROOT = Path(__file__).resolve().parents[2]
 PORT = int(os.getenv("WP_E2E_PORT", "8791"))
@@ -131,8 +132,18 @@ def flow(r: Run, dark: bool) -> None:
     expect(p.locator(".evchips")).to_contain_text("32 guests", timeout=20000)
     r.shot("chat-done" + suffix)
 
-    r.step("start the journey → plan")
+    r.step("start the journey → plan, with the working-on-it overlay")
     p.click("#view >> text=Start the journey")
+    try:
+        p.wait_for_selector("#busy:not([hidden])", timeout=4000)
+        text = p.locator("#busy-tx").inner_text()
+        assert text.startswith("Finding ") and "Gachibowli" in text, text
+        assert p.evaluate("document.getElementById('view').inert"), "page behind the overlay must be inert"
+        box = p.locator(".busyin").bounding_box()
+        assert abs(box["x"] + box["width"] / 2 - 640) < 4, "overlay must be centred"
+        r.shot("loading" + suffix, full=False)
+    except PlaywrightTimeout:
+        print("  (plan came back before the overlay delay)")
     expect(p.locator("#prop-h")).to_be_visible(timeout=160000)
     assert p.evaluate("document.activeElement.id") == "prop-h", "focus should move to the active stop"
     expect(p.locator(".node.now")).to_have_count(1)
@@ -156,6 +167,11 @@ def flow(r: Run, dark: bool) -> None:
     r.shot("options" + suffix, full=False)
     p.locator("#sheet .alt button:not([disabled])").first.click()
     expect(p.locator("#sheet")).to_have_count(0)
+    toast = p.locator("#toast")
+    expect(toast).to_be_visible()
+    p.wait_for_timeout(400)
+    tb = toast.bounding_box()
+    assert abs(tb["x"] + tb["width"] / 2 - 640) < 4, f"toast must be centred, got {tb}"
     p.wait_for_timeout(900)
     after = p.locator(".budtop span").first.inner_text()
     print("  budget", before, "→", after)
@@ -238,6 +254,17 @@ def edges(r: Run) -> None:
     p.goto(BASE + "/?demo=nophoto&reset=1")
     expect(p.locator(".nophoto")).to_be_visible(timeout=160000)
     r.shot("edge-nophoto")
+
+    r.step("reduced motion: the overlay rests, fully drawn")
+    rm = p.context.browser.new_context(reduced_motion="reduce", viewport={"width": 1280, "height": 900})
+    q = rm.new_page()
+    q.goto(BASE + "/?reset=1")
+    q.evaluate("import('/js/ui.js').then((m) => m.think('Testing the overlay…'))")
+    q.wait_for_selector("#busy:not([hidden])")
+    offset = q.evaluate("getComputedStyle(document.querySelector('.bm-path')).strokeDashoffset")
+    assert offset in ("0", "0px"), offset
+    q.screenshot(path=str(r.shots / "16-loading-reduced-motion.png"))
+    rm.close()
 
     r.step("mobile layout")
     p.set_viewport_size({"width": 390, "height": 844})

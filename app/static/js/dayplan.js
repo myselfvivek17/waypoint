@@ -32,11 +32,24 @@ export function dayView() {
 
 // ------------------------------------------------------------------ plan actions
 
+/** One line for the overlay that says what is being re-planned, in the user's own terms. */
+export function adjustLine(request) {
+  const t = request.toLowerCase();
+  const without = t.match(/(?:no|don'?t want(?: a| the| any)?|without(?: a| the)?|remove(?: the)?|skip(?: the)?|drop(?: the)?|cancel(?: the)?)\s+([a-z][a-z -]{1,30})/);
+  if (without) return `Re-planning without ${without[1].replace(/\s+(please|thanks?)$/, '').trim()}…`;
+  const add = t.match(/\badd(?: a| an)?\s+([a-z][a-z -]{1,30})/);
+  if (add && !/\d/.test(add[1])) return `Adding ${add[1].trim()} to the plan…`;
+  if (/budget|cheap|cost|save/.test(t)) return 'Re-balancing the budget…';
+  if (/guest|people/.test(t)) return 'Re-sizing the plan for the new guest count…';
+  if (/date|move|postpone|prepone/.test(t)) return 'Checking the new date and deadlines…';
+  return `Working out: “${request.slice(0, 60)}”…`;
+}
+
 async function runAdjust(text) {
   const request = String(text || '').trim().slice(0, 300);
   if (!request) return;
   update({ busy: true, adjMsg: '', diff: null });
-  think('Working out what changes…');
+  think(adjustLine(request));
   const booked = state.plan.stops.map((s) => s.key).filter((k) => state.ticks[k]);
   const r = await api.adjust({ plan: state.plan, chosen: state.j.chosen, ripples: state.j.ripples, booked, request });
   stopThinking();

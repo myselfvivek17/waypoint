@@ -1,11 +1,12 @@
-/* Shared UI plumbing: state updates, routing, the status pill, toasts and announcements. */
+/* Shared UI plumbing: state updates, routing, the "working on it" overlay, toasts and announcements. */
+import { busyMotif } from './art.js';
 import { state, save } from './store.js';
-import { reducedMotion } from './dom.js';
+import { clear, reducedMotion } from './dom.js';
 
 export const ROUTES = ['welcome', 'chat', 'journey', 'day', 'plan'];
 let renderFn = () => {};
 let toastTimer = 0;
-let pillTimer = 0;
+let busyTimer = 0, busyShow = 0, busyFrom = null;
 const timers = new Set();
 
 export function onRender(fn) { renderFn = fn; }
@@ -38,22 +39,45 @@ export function later(fn, ms) {
 
 export function cancelTimers() { timers.forEach(clearTimeout); timers.clear(); }
 
-/** Show the "thinking" pill. Several messages rotate while a long call runs. */
-export function think(messages) {
+const BEHIND = ['view', 'sheet-root', 'banner'];
+
+/** AI work in progress: a calm, centred overlay with the journey motif and one line saying what
+    is happening. Several lines rotate while a long call runs. It appears after a short delay so
+    quick answers never flash; the page behind is inert, and focus comes back afterwards. */
+export function think(messages, sub = '') {
   const list = Array.isArray(messages) ? messages : [messages];
-  const pill = document.getElementById('pill'), tx = document.getElementById('pill-tx');
+  const box = document.getElementById('busy'), tx = document.getElementById('busy-tx');
   let i = 0;
-  tx.textContent = list[0];
-  pill.hidden = false;
-  clearInterval(pillTimer);
+  clearInterval(busyTimer);
+  clearTimeout(busyShow);
+  busyFrom = document.activeElement;
+  for (const id of BEHIND) document.getElementById(id).inert = true;
+  document.querySelector('.hd').inert = true;
+  busyShow = setTimeout(() => {
+    const art = document.getElementById('busy-art');
+    if (!art.firstChild) art.append(busyMotif());
+    tx.textContent = list[0];
+    document.getElementById('busy-sub').textContent = sub;
+    box.hidden = false;
+    document.getElementById('busy-box').focus({ preventScroll: true });
+  }, 250);
   if (list.length > 1) {
-    pillTimer = setInterval(() => { i = Math.min(i + 1, list.length - 1); tx.textContent = list[i]; }, 7000);
+    busyTimer = setInterval(() => { i = Math.min(i + 1, list.length - 1); tx.textContent = list[i]; }, 7000);
   }
 }
 
 export function stopThinking() {
-  clearInterval(pillTimer);
-  document.getElementById('pill').hidden = true;
+  clearInterval(busyTimer);
+  clearTimeout(busyShow);
+  for (const id of BEHIND) document.getElementById(id).inert = false;
+  document.querySelector('.hd').inert = false;
+  const box = document.getElementById('busy');
+  const hadFocus = box.contains(document.activeElement);
+  box.hidden = true;
+  clear(document.getElementById('busy-tx'));
+  // The next render usually moves focus on purpose; otherwise return it to where it was.
+  if (hadFocus && busyFrom && busyFrom.isConnected) busyFrom.focus({ preventScroll: true });
+  busyFrom = null;
 }
 
 export function say(msg) {

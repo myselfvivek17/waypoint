@@ -35,7 +35,7 @@ export async function sendChat(message, asked, edit = false) {
   const body = { profile: state.profile, message: message.slice(0, 500), asked: asked || null,
     transcript: state.chat.transcript.slice(-16), edit };
   update({ busy: true, err: '' });
-  if (!edit) think('Reading that…');
+  if (!edit) think(asked ? 'Noting that down…' : 'Reading what you are celebrating…');
   const r = await api.chat(body);
   stopThinking();
   if (!r.ok) {
@@ -67,17 +67,23 @@ async function startChat(message) {
   await sendChat(message, null);
 }
 
-const PLAN_STEPS = (p) => [
-  `Finding real venues near ${(p.area || 'you').split(',')[0]} on OpenStreetMap…`,
-  'Asking the AI to draft every stop around your details…',
-  'Checking the budget adds up and every place is real…',
-  'Almost there: writing the run-sheet and the invite…',
-];
+/** What the overlay says while the plan is drafted: specific to this event, never generic. */
+const PLAN_STEPS = (p) => {
+  const where = (p.area || 'your area').split(',')[0];
+  const kinds = p.type === 'house-warming' ? 'caterers, bakeries and temples'
+    : (p.guests || 0) <= 40 ? 'cafés and restaurants' : (p.guests || 0) <= 120 ? 'restaurants and halls' : 'banquet halls and lawns';
+  return [
+    `Finding ${kinds} around ${where}…`,
+    `Drafting every stop around ${p.who ? p.who.split(/[,—–-]/)[0].trim() : 'your details'}…`,
+    'Checking the budget adds up and every place is real…',
+    'Writing the run-sheet and the invite…',
+  ];
+};
 
 /** Rules, real places and one model call on the server; then the journey starts. */
 export async function buildPlan() {
   update({ busy: true, err: '' });
-  think(PLAN_STEPS(state.profile));
+  think(PLAN_STEPS(state.profile), 'A first plan for a new area can take up to a minute.');
   const r = await api.plan(state.profile, !state.demo.offline);
   stopThinking();
   if (r.status === 409 && r.data.block) {

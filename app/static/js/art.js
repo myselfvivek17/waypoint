@@ -107,3 +107,17 @@ export function moonIcon() {
   return s('svg', { viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linejoin': 'round' },
     s('path', { d: 'M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z' }));
 }
+
+/** The journey motif for the "working on it" overlay: a route drawing itself through three stops
+    towards a lamp. Animated in CSS; under reduced motion it rests fully drawn. */
+export function busyMotif() {
+  const d = 'M14 70 C60 70 62 30 104 30 S150 62 196 52 S250 22 286 26';
+  return s('svg', { viewBox: '0 0 300 96', width: 300, height: 96 },
+    s('path', { class: 'bm-base', d }),
+    s('path', { class: 'bm-path', d, pathLength: 1 }),
+    s('circle', { class: 'bm-orig', cx: 14, cy: 70, r: 6 }),
+    [[104, 30], [196, 52]].map(([cx, cy], i) => s('circle', { class: 'bm-node', cx, cy, r: 11, style: { animationDelay: (0.5 + i * 0.6) + 's' } })),
+    s('g', { transform: 'translate(274 0)' }, s('g', { class: 'bm-flame' },
+      s('path', { d: 'M11 1c4 6 9 9 9 16a9 9 0 0 1-18 0c0-5 3-7 4-12 2 1 3 3 5-4z', fill: '#E8A317' }),
+      s('path', { d: 'M11 14c2 3 4 4 4 7a4 4 0 0 1-8 0c0-3 3-4 4-7z', fill: '#FBF4E6' }))));
+}
