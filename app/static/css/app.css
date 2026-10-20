@@ -342,6 +342,9 @@ h1:focus-visible,h2:focus-visible{outline:3px solid var(--focus);outline-offset:
 }
 @media (max-width:520px){
  .alt{grid-template-columns:minmax(0,1fr)}
+ .navb{padding:0 10px}
+ .logo{font-size:26px}
+ .hdr{gap:4px}
  .brow{grid-template-columns:90px minmax(0,1fr) auto}
  body{font-size:16px}
 }
