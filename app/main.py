@@ -21,7 +21,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 ROOT = Path(__file__).resolve().parent
@@ -48,7 +48,7 @@ SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
     "Referrer-Policy": "no-referrer",
-    "Permissions-Policy": "camera=(), microphone=(), geolocation=(), payment=()",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=(self), payment=()",
     "Cross-Origin-Opener-Policy": "same-origin",
     "Cross-Origin-Resource-Policy": "same-origin",
 }
@@ -221,6 +221,22 @@ async def get_places(request: Request, area: str | None = Query(None, min_length
         ps = await places.venues(area, guests)
         return {"center": ps.center, "count": len(ps.places)}
     raise HTTPException(422, "Give an area, or a latitude and longitude.")
+
+
+class WhereIn(Strict):
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+
+
+@app.post("/api/whereami")
+async def whereami(body: WhereIn, request: Request) -> dict:
+    """The area name for the device position the user chose to share. POST keeps the coordinates
+    out of access logs; nothing is cached or stored."""
+    limiter.check(request, "places")
+    label = await places.reverse(round(body.lat, 3), round(body.lon, 3))
+    if not label:
+        raise HTTPException(404, "I couldn't name that place. Please type your area instead.")
+    return {"area": label}
 
 
 FILE_RE = re.compile(r"^File:[^/\\<>#?|{}\[\]]{1,200}\.(?:jpe?g|png|webp)$", re.I)

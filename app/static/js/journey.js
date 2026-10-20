@@ -172,6 +172,21 @@ export function areaName() {
   return ((state.plan && state.plan.profile.area) || 'the area').split(',')[0].trim();
 }
 
+/** What distances are measured from: the area the user named, or "you" only when they shared
+    their own location. Never "near you" otherwise: the search is around the event area. */
+export function distFrom() {
+  return state.plan && state.plan.profile.from_me ? 'you' : areaName();
+}
+
+/** "Searching around: Gachibowli, Hyderabad · change", shown above the map and nearby results. */
+function searchingAround(centre) {
+  const p = state.plan.profile;
+  const label = p.from_me ? `${p.area} (your location)` : (state.plan.area_point && state.plan.area_point.label) || p.area;
+  return h('p', { class: 'around' }, h('span', null, 'Searching around: ', h('b', null, centre || label)), ' · ',
+    h('button', { class: 'linkb', type: 'button', onClick: () => { state.editing = 'area'; state.editDraft = p.area || ''; go('chat', { focus: 'ed-in' }); } },
+      'change', h('span', { class: 'sr' }, ' the area')));
+}
+
 function venuePoint(m) {
   const v = m.find((x) => x.key === 'venue');
   if (v && v.item.lat != null) return { lat: v.item.lat, lon: v.item.lon, named: true, name: v.item.name };
@@ -289,8 +304,9 @@ function mapView(m) {
   const list = [];
   if (!pt) {
     kids.push(h('p', { class: 'mapnote' }, "There's nothing to map yet: I couldn't place your area on OpenStreetMap."));
-    return h('div', null, h('div', { class: 'mapwrap' }, kids));
+    return h('div', null, searchingAround(), h('div', { class: 'mapwrap' }, kids));
   }
+  const from = pt.named ? pt.name : distFrom();
   const ny = j.nearby ? nearbyFor(pt) : null;
   const places = ny ? ny.places : [];
   const kmx = (lon) => (lon - pt.lon) * 111.32 * Math.cos((pt.lat * Math.PI) / 180);
@@ -308,7 +324,7 @@ function mapView(m) {
     if (Math.hypot(ax - 50, (ay - 26) * 1.8) > 12) {  // only when the pins would not collide
       kids.push(s('svg', { class: 'routesvg', viewBox: '0 0 100 56', preserveAspectRatio: 'xMidYMid slice', 'aria-hidden': 'true' },
         s('path', { class: 'm-route', d: `M${ax.toFixed(1)} ${ay.toFixed(1)} C${((ax + 50) / 2).toFixed(1)} ${ay.toFixed(1)} ${((ax + 50) / 2).toFixed(1)} 26 50 26` })));
-      kids.push(h('div', { class: 'pin me', style: { left: ax + '%', top: (ay / 56) * 100 + '%' } }, 'Area'));
+      kids.push(h('div', { class: 'pin me', style: { left: ax + '%', top: (ay / 56) * 100 + '%' } }, state.plan.profile.from_me ? 'You' : 'Area'));
     }
   }
   if (sel) {
@@ -316,24 +332,25 @@ function mapView(m) {
     kids.push(s('svg', { viewBox: '0 0 100 56', preserveAspectRatio: 'xMidYMid slice', 'aria-hidden': 'true' },
       s('line', { class: 'm-line', x1: 50, y1: 26, x2: sx.toFixed(1), y2: sy.toFixed(1) })));
   }
-  kids.push(h('div', { class: 'pin ven', style: { left: '50%', top: (26 / 56) * 100 + '%' } }, pt.named ? 'Venue' : 'Area'));
+  kids.push(h('div', { class: 'pin ven', style: { left: '50%', top: (26 / 56) * 100 + '%' } }, pt.named ? 'Venue' : state.plan.profile.from_me ? 'You' : 'Area'));
   places.forEach((p) => {
     const [x, y] = proj(p.lat, p.lon);
     const [letter, label] = PIN_KIND[p.group] || ['•', 'Place'];
     kids.push(h('button', { class: 'pin ' + p.group, type: 'button', 'aria-pressed': j.pin === p.id ? 'true' : 'false',
-      'aria-label': `${label}: ${p.name}, ${p.dist_km} km`, style: { left: Math.min(97, Math.max(3, x)) + '%', top: (Math.min(53, Math.max(3, y)) / 56) * 100 + '%' },
+      'aria-label': `${label}: ${p.name}, ${p.dist_km} km from ${from}`, style: { left: Math.min(97, Math.max(3, x)) + '%', top: (Math.min(53, Math.max(3, y)) / 56) * 100 + '%' },
       onClick: () => setJ({ pin: j.pin === p.id ? null : p.id }) }, letter));
-    list.push(h('li', null, h('b', null, `${label}: ${p.name}`), `${p.dist_km} km from the ${pt.named ? 'venue' : 'area centre'} · ${p.label}`));
+    list.push(h('li', null, h('b', null, `${label}: ${p.name}`), `${p.dist_km} km from ${from} · ${p.label}`));
   });
-  if (sel) kids.push(h('div', { class: 'pincap', role: 'status' }, h('b', null, sel.name), ` · ${sel.dist_km} km · ${sel.label}`));
-  else if (!pt.named) kids.push(h('p', { class: 'mapnote' }, "Your venue is a description, not a named place yet, so the map centres on your area."));
+  if (sel) kids.push(h('div', { class: 'pincap', role: 'status' }, h('b', null, sel.name), ` · ${sel.dist_km} km from ${from} · ${sel.label}`));
+  else if (!pt.named) kids.push(h('p', { class: 'mapnote' }, `Your venue is a description, not a named place yet, so the map centres on ${state.plan.profile.from_me ? 'your location' : 'the area'}.`));
   return h('div', null,
-    h('div', { class: 'mapwrap', role: 'group', 'aria-label': 'Map of the venue and nearby places. The list below has the same places.' }, kids),
+    searchingAround(pt.named ? `${pt.name}, the venue` : null),
+    h('div', { class: 'mapwrap', role: 'group', 'aria-label': `Map around ${from}. The list below has the same places.` }, kids),
     j.nearby
-      ? (ny.status === 'loading' ? h('p', { class: 'lead', role: 'status' }, 'Looking for food, parking and stays nearby…')
-        : list.length ? h('ul', { class: 'nearl', 'aria-label': 'Places near the venue' }, list)
-          : h('p', { class: 'lead', role: 'status' }, 'No food, parking or stays found within 1.5 km on OpenStreetMap.'))
-      : h('p', { class: 'lead' }, 'Turn on Nearby to see food, parking and stays around the venue.'),
+      ? (ny.status === 'loading' ? h('p', { class: 'lead', role: 'status' }, `Looking for food, parking and stays around ${from}…`)
+        : list.length ? h('ul', { class: 'nearl', 'aria-label': `Places around ${from}` }, list)
+          : h('p', { class: 'lead', role: 'status' }, `No food, parking or stays found within 1.5 km of ${from} on OpenStreetMap.`))
+      : h('p', { class: 'lead' }, `Turn on "Around the venue" to see food, parking and stays within 1.5 km of ${from}.`),
     h('p', { class: 'osm' }, 'Places © OpenStreetMap contributors (ODbL).'));
 }
 
@@ -391,8 +408,8 @@ function proposal(m, idx) {
   const ai = state.plan.source === 'ai';
   const unit = it.per_guest ? `${inr(it.price)} a guest × ${guests}`
     : cur.extra ? `includes ${cur.extra > 0 ? '+' : '−'}${inr(Math.abs(cur.extra))} from earlier choices` : '';
-  const where = it.where ? `From ${it.where}${it.dist_km != null ? `, ${it.dist_km} km from ${areaName()}` : ''}`
-    : it.dist_km != null ? `${it.dist_km} km from ${areaName()}` : '';
+  const where = it.where ? `From ${it.where}${it.dist_km != null ? `, ${it.dist_km} km from ${distFrom()}` : ''}`
+    : it.dist_km != null ? `${it.dist_km} km from ${distFrom()}` : '';
   const osm = st.key === 'venue' ? osmUrl(it.place_id) : null;
   const kinds = [...new Set(st.options.map((o) => o.kind))];
   return h('section', { class: 'prop', 'aria-labelledby': 'prop-h' },
@@ -482,7 +499,7 @@ export function sheetView() {
         h('p', { class: 'step', style: { margin: '0' } }, o.id === cur.s.rec.id ? 'My first suggestion' : o.kind),
         h('b', null, o.name),
         o.where || o.dist_km != null || osm ? h('p', { class: 'tt2' },
-          o.where ? 'From ' + o.where : o.dist_km != null ? `${o.dist_km} km from ${areaName()}` : '',
+          o.where ? 'From ' + o.where : o.dist_km != null ? `${o.dist_km} km from ${distFrom()}` : '',
           osm ? [' · ', h('a', { href: osm, target: '_blank', rel: 'noopener noreferrer' }, 'OpenStreetMap', h('span', { class: 'sr' }, ` page for ${o.name} (new tab)`))] : null) : null,
         h('p', { class: 'altp' }, inr(price), ' ',
           h('span', { class: d > 0 ? 'more' : d < 0 ? 'less' : '' }, '· ' + (d === 0 ? 'same price' : d > 0 ? inr(d) + ' more' : inr(-d) + ' less'))),
@@ -536,7 +553,7 @@ export function journeyView(opts) {
         ['path', 'map', 'list'].map((v) => h('button', { class: 'sg', type: 'button', 'aria-pressed': String(j.view === v), onClick: setView(v) },
           v[0].toUpperCase() + v.slice(1)))),
       h('button', { class: 'tgl', type: 'button', role: 'switch', 'aria-checked': String(!!j.nearby),
-        onClick: () => setJ({ nearby: !j.nearby, view: !j.nearby ? 'map' : j.view, pin: null }) }, h('span', { class: 'knob', 'aria-hidden': 'true' }), 'Nearby'),
+        onClick: () => setJ({ nearby: !j.nearby, view: !j.nearby ? 'map' : j.view, pin: null }) }, h('span', { class: 'knob', 'aria-hidden': 'true' }), 'Around the venue'),
       h('button', { class: 'btn', type: 'button', disabled: state.planning || !undecided, onClick: planRest }, 'Plan the rest for me')),
     j.view === 'map' ? mapView(m) : j.view === 'list' ? listView(m, idx, reach) : pathView(m, idx, reach, !!(opts && opts.routeChanged)),
     idx >= n ? finale() : proposal(m, idx),

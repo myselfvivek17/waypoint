@@ -24,6 +24,7 @@ function initial() {
     sheet: false, why: false, change: false, changeDraft: '', changeMsg: '', slide: 0,
     planning: false, adjDraft: '', adjMsg: '', adjSource: null, diff: null, inviteShown: false, online: navigator.onLine !== false,
     demo: {}, serverToday: null, llmMode: null, photos: {}, nearby: {},
+    locBusy: false, locMsg: '', areaCheck: null,
   };
 }
 

@@ -80,7 +80,7 @@ def venue_set() -> places.PlaceSet:
 
 @pytest.fixture
 def no_places(monkeypatch):
-    async def empty(area, guests):
+    async def empty(area, guests, point=None):
         return places.PlaceSet()
 
     async def nowhere(area):

@@ -34,6 +34,7 @@ export const api = {
   plan: (profile, ai = true) => call('POST', '/api/plan', { profile, ai }, 150000),
   adjust: (body) => call('POST', '/api/adjust', body, 40000),
   ics: (body) => call('POST', '/api/ics', body, 10000),
+  whereami: (lat, lon) => call('POST', '/api/whereami', { lat, lon }, 15000),
   prefetch: (area, guests) => call('GET', '/api/places?' + new URLSearchParams(
     guests ? { area, guests } : { area }), null, 60000),
   nearby: (lat, lon) => call('GET', '/api/places?' + new URLSearchParams({ lat: lat.toFixed(5), lon: lon.toFixed(5) }), null, 60000),

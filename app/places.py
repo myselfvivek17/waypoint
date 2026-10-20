@@ -32,6 +32,8 @@ log = logging.getLogger("waypoint.places")
 USER_AGENT = "Waypoint-event-planner/0.1 (local, non-commercial; " + os.getenv(
     "WP_CONTACT", "hackathon demo") + ")"
 NOMINATIM = "https://nominatim.openstreetmap.org/search"
+NOMINATIM_REVERSE = "https://nominatim.openstreetmap.org/reverse"
+COUNTRIES = os.getenv("WP_COUNTRIES", "in")  # India-first: "Nearby area" must not resolve to South Carolina
 OVERPASS = (
     "https://overpass-api.de/api/interpreter",
     "https://lz4.overpass-api.de/api/interpreter",
@@ -176,24 +178,50 @@ def distance_km(a_lat: float, a_lon: float, b_lat: float, b_lon: float) -> float
 
 # ------------------------------------------------------------------ geocode + overpass
 
+def short_label(addr: dict, display: str = "") -> str:
+    """"Gachibowli, Hyderabad" from a Nominatim address (neighbourhood, then city)."""
+    local = next((addr[k] for k in ("suburb", "neighbourhood", "quarter", "city_district", "village", "town")
+                  if addr.get(k)), "")
+    city = next((addr[k] for k in ("city", "town", "county", "state_district", "state") if addr.get(k)), "")
+    parts = [x for x in (local, city) if x]
+    if len(parts) == 2 and parts[0] == parts[1]:
+        parts = parts[:1]
+    label = ", ".join(parts) or ", ".join(display.split(", ")[:3])
+    return label[:160]
+
+
 async def geocode(area: str) -> Point | None:
-    """Turn "Gachibowli, Hyderabad" into a point. Cached; None when unknown."""
+    """Turn "Gachibowli, Hyderabad" into a point with the geocoder's own name for it. Cached."""
     key = area.strip().lower()
     if not key:
         return None
     hit = geo_cache.get(key)
     if hit is not None:
         return hit or None
-    rows = await _get_json(NOMINATIM, params={"q": area, "format": "jsonv2", "limit": 1,
-                                              "accept-language": "en"}, timeout=8.0)
+    params = {"q": area, "format": "jsonv2", "limit": 1, "accept-language": "en", "addressdetails": 1}
+    if COUNTRIES:
+        params["countrycodes"] = COUNTRIES
+    rows = await _get_json(NOMINATIM, params=params, timeout=8.0)
     point = None
     if isinstance(rows, list) and rows:
         try:
-            point = Point(lat=float(rows[0]["lat"]), lon=float(rows[0]["lon"]))
+            point = Point(lat=float(rows[0]["lat"]), lon=float(rows[0]["lon"]),
+                          label=short_label(rows[0].get("address") or {}, str(rows[0].get("display_name", ""))) or None)
         except (KeyError, TypeError, ValueError):
             point = None
     geo_cache.put(key, point or False, ttl=None if point else 600)
     return point
+
+
+async def reverse(lat: float, lon: float) -> str | None:
+    """The area name for a device position. Deliberately not cached or logged: the position is
+    used for this one lookup and then forgotten."""
+    row = await _get_json(NOMINATIM_REVERSE, params={"lat": f"{lat:.3f}", "lon": f"{lon:.3f}", "format": "jsonv2",
+                                                     "zoom": 14, "accept-language": "en", "addressdetails": 1},
+                          timeout=8.0)
+    if not isinstance(row, dict) or "address" not in row:
+        return None
+    return short_label(row.get("address") or {}, str(row.get("display_name", ""))) or None
 
 
 def _photo_from_tags(tags: dict, lat: float, lon: float) -> PhotoHint | None:
@@ -275,23 +303,25 @@ def _nearby_query(c: Point, radius: int) -> str:
 _inflight: dict[tuple, asyncio.Task] = {}
 
 
-async def venues(area: str, guests: int | None) -> PlaceSet:
-    """Candidate venues and bakeries around the area. Empty set when nothing is reachable.
+async def venues(area: str, guests: int | None, point: Point | None = None) -> PlaceSet:
+    """Candidate venues and bakeries around the area (or a shared point). Empty set when
+    nothing is reachable.
 
     Concurrent calls for the same area share one lookup, so the browser can prefetch while
     the intake chat is still going and the plan request simply joins it.
     """
-    key = (area.strip().lower(), (guests or 0) > 120)
+    where = f"{point.lat:.3f},{point.lon:.3f}" if point else area.strip().lower()
+    key = (where, (guests or 0) > 120)
     task = _inflight.get(key)
     if task is None or task.done():
-        task = asyncio.ensure_future(_venues(area, guests))
+        task = asyncio.ensure_future(_venues(area, guests, point))
         _inflight[key] = task
         task.add_done_callback(lambda _t, k=key: _inflight.pop(k, None))
     return await asyncio.shield(task)
 
 
-async def _venues(area: str, guests: int | None) -> PlaceSet:
-    center = await geocode(area)
+async def _venues(area: str, guests: int | None, point: Point | None = None) -> PlaceSet:
+    center = point or await geocode(area)
     if center is None:
         return PlaceSet()
     radius = 3000 if (guests or 0) <= 120 else 8000

@@ -15,7 +15,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, ValidationError
 
 from . import llm, rules
-from .schemas import Block, EventType, Insight, Profile, Source, Strict
+from .schemas import PRIVATE, Block, EventType, Insight, Profile, Source, Strict
 from .validators import CAPS, cap_list, clip
 
 FieldName = Literal["guests", "budget", "area", "date", "who", "food", "access", "have", "type"]
@@ -247,6 +247,8 @@ def extract(text: str, asked: str | None, profile: Profile, today: dt.date) -> d
         patch["date"] = date
     if asked == "area":
         patch["area"] = clip(text, 120)
+        if profile.point is not None and (profile.point.label or "") != patch["area"]:
+            patch["point"], patch["from_me"] = None, False  # a typed area replaces the shared position
     elif asked is None and (area := parse_area(text)):
         patch["area"] = clip(area, 120)
     if asked in ("who", "food", "access", "have"):
@@ -290,6 +292,7 @@ def summary_line(p: Profile, today: dt.date) -> str:
     """The deterministic "what I understood" sentence, used when no model wrote one."""
     kind = TYPE_WORDS.get(p.type, p.type)
     who = re.split(r"[,—–:(]", p.who)[0].strip() if p.who else ""
+    who = re.sub(r"^(The|A|An) ", lambda m: m.group(1).lower() + " ", who)
     parts = [f"A {kind}" + (f" for {who}" if who and not re.match(r"(?i)^(my|our)\b", who) else "")]
     if p.guests:
         parts.append(f"with about {p.guests} guests")
@@ -348,7 +351,7 @@ async def chat_turn(inp: ChatIn, today: dt.date) -> ChatOut:
         draft = _fallback(inp, base, asked_before)
         patch = {}
     else:
-        data = {"profile": inp.profile.model_dump(mode="json", exclude_defaults=True),
+        data = {"profile": inp.profile.model_dump(mode="json", exclude_defaults=True, exclude=PRIVATE),
                 "asked": inp.asked, "message": inp.message, "already_asked": sorted(asked_before),
                 "today": today.isoformat()}
         res = await llm.ask("chat", INSTRUCTIONS, data, ChatDraft,

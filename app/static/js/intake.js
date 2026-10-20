@@ -3,7 +3,8 @@ import { api, errorText } from './api.js';
 import { daysBetween, h, inr, longDate, parseISO, shortDate } from './dom.js';
 import { budgetLine, summary } from './model.js';
 import { adoptPlan, discardDetailEdits, freshChat, freshJourney, state } from './store.js';
-import { announce, go, say, stopThinking, think, todayIso, update } from './ui.js';
+import { pinIcon } from './art.js';
+import { announce, go, rerender, say, stopThinking, think, todayIso, update } from './ui.js';
 
 const STARTERS = ['Birthday', 'Wedding', 'House-warming', 'Community event'];
 const OPENING_Q = 'What are you celebrating?';
@@ -48,7 +49,7 @@ export async function sendChat(message, asked, edit = false) {
   if (!edit && message) {
     transcript.push({ field: asked || null, q: (asked ? state.chat.reply : OPENING_Q).slice(0, 300), a: message.slice(0, 300) });
   }
-  const hadArea = state.profile.area;
+  const hadArea = state.profile.area, hadPoint = JSON.stringify(state.profile.point || null);
   const changed = JSON.stringify(out.profile) !== JSON.stringify(state.profile);
   update({
     busy: false, draft: '', editing: null, profile: out.profile,
@@ -58,9 +59,60 @@ export async function sendChat(message, asked, edit = false) {
       // keep the model's own summary until an edit replaces it with the rules' one
       understood: out.understood || '', understoodSource: out.understood_source || 'mock', insights: out.insights || [] },
   }, { focus: edit ? null : 'question' });
-  if (out.profile.area && out.profile.area !== hadArea) api.prefetch(out.profile.area, out.profile.guests);
+  if (out.profile.area && (out.profile.area !== hadArea || JSON.stringify(out.profile.point || null) !== hadPoint)) checkArea(out.profile);
   announce(out.block ? out.block.title : out.done ? "That's everything I need." : out.reply);
   return true;
+}
+
+/** Warm the venue cache and learn what the map calls the area, so the user can confirm it. */
+function checkArea(p) {
+  if (p.point && p.from_me) { state.areaCheck = { area: p.area, label: p.area, mine: true }; return; }
+  state.areaCheck = { area: p.area, label: undefined };
+  api.prefetch(p.area, p.guests).then((r) => {
+    if (state.profile.area !== p.area) return;
+    state.areaCheck = { area: p.area, label: r.ok ? (r.data.center ? r.data.center.label || p.area : null) : undefined };
+    if (state.route === 'chat') rerender({ focus: null });
+  });
+}
+
+const LOC_NOTE = 'Your position is used once, to name your area and search around it. It stays on this device; the server never stores it.';
+
+/** Opt-in device location: asked only on this click, rounded to about 100 m, then named. */
+export function useMyLocation() {
+  if (!navigator.geolocation) { update({ locMsg: "This browser can't share a location. Please type your area instead." }); return; }
+  update({ locBusy: true, locMsg: 'Asking your browser for your position…' }, { focus: null });
+  navigator.geolocation.getCurrentPosition(async (pos) => {
+    const lat = Math.round(pos.coords.latitude * 1000) / 1000, lon = Math.round(pos.coords.longitude * 1000) / 1000;
+    const r = await api.whereami(lat, lon);
+    if (!r.ok) { update({ locBusy: false, locMsg: errorText(r) }); return; }
+    const area = r.data.area;
+    const answering = state.chat.ask === 'area' && !state.chat.done;
+    state.profile = Object.assign({}, state.profile, { point: { lat, lon, label: area }, from_me: true });
+    update({ locBusy: false, locMsg: '' }, { render: false });
+    await sendChat(area, 'area', !answering);
+    say(`Searching around ${area}. Not right? Edit the area.`);
+  }, (err) => update({ locBusy: false, locMsg: err && err.code === 1
+    ? 'Location permission was declined, which is fine. Please type your area instead.'
+    : "I couldn't get your position. Please type your area instead." }),
+  { enableHighAccuracy: false, timeout: 12000, maximumAge: 600000 });
+}
+
+function locateButton() {
+  return h('div', { class: 'loc' },
+    h('button', { class: 'btn', id: 'loc-btn', type: 'button', disabled: state.locBusy, onClick: useMyLocation }, pinIcon(), 'Use my location'),
+    h('p', { class: 'tt2' }, LOC_NOTE),
+    state.locMsg ? h('p', { class: 'chgmsg', role: 'status' }, state.locMsg) : null);
+}
+
+/** What the map made of the area the user typed: confirm it, or correct it. */
+function areaNote(p) {
+  if (p.from_me) return h('p', { class: 'tt2 areanote' }, 'From your location. Searching around it, not your exact position.');
+  const c = state.areaCheck;
+  if (!c || c.area !== p.area || c.label === undefined) return null;
+  if (c.label === null) {
+    return h('p', { class: 'err areanote', role: 'status' }, "I couldn't find this area on OpenStreetMap. Try a neighbourhood and city, like \"Gachibowli, Hyderabad\".");
+  }
+  return h('p', { class: 'tt2 areanote' }, `Found on the map as: ${c.label}. Not right? Edit it.`);
 }
 
 async function startChat(message) {
@@ -242,6 +294,7 @@ function questionView(c) {
     c.chips.length ? h('div', { class: 'chips', role: 'group', 'aria-label': 'Quick answers' },
       c.chips.map((chip) => h('button', { class: 'chip', type: 'button', disabled: state.busy,
         onClick: () => sendChat(chip, c.ask) }, chip))) : null,
+    c.ask === 'area' ? locateButton() : null,
     h('form', { class: 'ans', onSubmit: submit },
       h('label', { class: 'sr', for: 'a-in' }, 'Your answer'),
       h('input', { id: 'a-in', type: 'text', autocomplete: 'off', maxlength: 300, placeholder: c.placeholder,
@@ -326,7 +379,8 @@ function fieldRow(key, label, placeholder, p) {
   }
   return h('div', { class: 'drow' },
     h('dt', null, label),
-    h('dd', null, val || h('span', { class: 'tt2' }, key === 'have' ? 'Nothing yet: tell me what is already sorted.' : 'Not set')),
+    h('dd', null, val || h('span', { class: 'tt2' }, key === 'have' ? 'Nothing yet: tell me what is already sorted.' : 'Not set'),
+      key === 'area' && p.area ? areaNote(p) : null),
     h('button', { class: 'linkb', id: 'ed-' + key, type: 'button',
       onClick: () => update({ editing: key, editDraft: rawValue(key, p) }, { focus: key === 'type' ? null : 'ed-in' }) },
     val ? 'Edit' : 'Add', h('span', { class: 'sr' }, ' ' + label)));
@@ -360,7 +414,8 @@ function detailsView() {
       h('div', { class: 'dfields' },
         GROUPS.map(([title, rows]) => h('section', { class: 'dgroup', 'aria-label': title },
           h('h2', { class: 'dgh' }, title),
-          h('dl', null, rows.map(([key, label, ph]) => fieldRow(key, label, ph, p))))),
+          h('dl', null, rows.map(([key, label, ph]) => fieldRow(key, label, ph, p))),
+          title === 'Where' ? locateButton() : null)),
         c.transcript.length ? h('details', { class: 'howgot' },
           h('summary', null, `How we got here: ${c.transcript.length} answer${c.transcript.length === 1 ? '' : 's'}`),
           c.transcript.map((t) => h('div', { class: 'tq' }, h('p', { class: 'tqq' }, t.q), h('p', { class: 'tqa' }, t.a)))) : null)));

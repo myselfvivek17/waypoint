@@ -212,9 +212,12 @@ def flow(r: Run, dark: bool) -> None:
     expect(p.locator("#sheet")).to_have_count(0)
     expect(p.locator("#opt-btn")).to_be_focused()
 
-    r.step("map + nearby, list view")
+    r.step("map + around the venue, list view")
+    expect(p.locator("button.tgl")).to_have_text("Around the venue")
     p.click("button.tgl")
     expect(p.locator(".mapwrap")).to_be_visible()
+    expect(p.locator(".around")).to_contain_text("Searching around:")
+    assert not re.search(r"\b(from|near) you\b", p.locator("body").inner_text()), "never 'from you' unless shared"
     p.wait_for_timeout(1500)
     r.shot("map" + suffix)
     p.click("button.sg >> text=List")
@@ -282,6 +285,27 @@ def edges(r: Run) -> None:
     p.goto(BASE + "/?demo=nophoto&reset=1")
     expect(p.locator(".nophoto")).to_be_visible(timeout=160000)
     r.shot("edge-nophoto")
+
+    r.step("use my location: asked only on click, named, and correctable")
+    geo = p.context.browser.new_context(geolocation={"latitude": 17.4401, "longitude": 78.3489},
+                                        permissions=["geolocation"], viewport={"width": 1280, "height": 900})
+    g = geo.new_page()
+    g.on("pageerror", lambda e: r.errors.append(f"pageerror: {e}"))
+    g.goto(BASE + "/?reset=1")
+    g.click("#view >> text=A wedding in Jaipur")
+    expect(g.locator("#prop-h")).to_be_visible(timeout=160000)
+    g.click("nav >> text=Details")
+    expect(g.locator("#loc-btn")).to_be_visible()
+    expect(g.locator(".loc")).to_contain_text("never stores it")
+    g.click("#loc-btn")
+    expect(g.locator(".areanote")).to_contain_text("From your location", timeout=30000)
+    where = g.locator(".dgroup[aria-label=Where] dd").first.inner_text()
+    print("  resolved area:", where.splitlines()[0])
+    assert "Jaipur" not in where
+    expect(g.locator(".offb.dirty")).to_have_count(0)  # details page itself offers the re-plan
+    expect(g.locator("#view >> text=Re-plan with these details")).to_be_visible()
+    g.screenshot(path=str(r.shots / "17-use-my-location.png"), full_page=True)
+    geo.close()
 
     r.step("reduced motion: the overlay rests, fully drawn")
     rm = p.context.browser.new_context(reduced_motion="reduce", viewport={"width": 1280, "height": 900})

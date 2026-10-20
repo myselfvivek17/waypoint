@@ -121,3 +121,9 @@ export function busyMotif() {
       s('path', { d: 'M11 1c4 6 9 9 9 16a9 9 0 0 1-18 0c0-5 3-7 4-12 2 1 3 3 5-4z', fill: '#E8A317' }),
       s('path', { d: 'M11 14c2 3 4 4 4 7a4 4 0 0 1-8 0c0-3 3-4 4-7z', fill: '#FBF4E6' }))));
 }
+
+export function pinIcon() {
+  return s('svg', { viewBox: '0 0 24 24', width: 18, height: 18, fill: 'none', stroke: 'currentColor', 'stroke-width': 2,
+    'stroke-linejoin': 'round', 'aria-hidden': 'true', class: 'ic' },
+  s('path', { d: 'M12 21s-6.5-6.2-6.5-11a6.5 6.5 0 0 1 13 0c0 4.8-6.5 11-6.5 11z' }), s('circle', { cx: 12, cy: 10, r: 2.4 }));
+}

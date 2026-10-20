@@ -22,7 +22,7 @@ from . import llm, places, rules, templates
 from .intake import parse_date, parse_money
 from .places import Place, PlaceSet
 from .rules import RulesResult, inr
-from .schemas import (Block, Day, DayItem, DraftOption, DraftPlan, DraftStop, Option, PhotoHint, Plan, Profile,
+from .schemas import (PRIVATE, Block, Day, DayItem, DraftOption, DraftPlan, DraftStop, Option, PhotoHint, Plan, Profile,
                       Ripple, Source, Stop, Strict, Task)
 from .validators import (CAPS, cap_list, clamp_due, clip, drop_money, drop_wrong_kind, fit_budget, fix_option_kinds,
                          line_total, sentences, to_int)
@@ -303,13 +303,14 @@ def assemble(draft: DraftPlan, fb: DraftPlan, p: Profile, r: RulesResult, ps: Pl
 # ------------------------------------------------------------------ build
 
 async def gather_places(p: Profile) -> PlaceSet:
-    """Venues for the area, waiting at most ``PLACE_WAIT`` seconds (prefetch makes this quick)."""
-    if not p.area:
+    """Venues around the user's point (if they shared it) or the area they typed, waiting at most
+    ``PLACE_WAIT`` seconds (the browser's prefetch usually makes this quick)."""
+    if not p.area and p.point is None:
         return PlaceSet()
     try:
-        return await asyncio.wait_for(places.venues(p.area, p.guests), timeout=PLACE_WAIT)
+        return await asyncio.wait_for(places.venues(p.area, p.guests, p.point), timeout=PLACE_WAIT)
     except TimeoutError:
-        return PlaceSet(center=await places.geocode(p.area))
+        return PlaceSet(center=p.point or await places.geocode(p.area))
 
 
 def _place_brief(pl: Place) -> dict:
@@ -334,7 +335,7 @@ def plan_request(p: Profile, r: RulesResult, venues: list[Place], bakeries: list
             item = {"key": key, "label": label, "target_per_guest": int(line / p.guests), "per_guest": True}
         stops.append(item)
     return {
-        "event": p.model_dump(mode="json", exclude_defaults=True),
+        "event": p.model_dump(mode="json", exclude_defaults=True, exclude=PRIVATE),
         "rules": {
             "budget_band": r.band, "per_guest": r.per_guest, "days_left": r.days_left, "urgency": r.urgency,
             "late": r.late, "season": r.season, "venue_size": r.venue_size, "catering": r.catering,

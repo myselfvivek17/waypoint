@@ -24,6 +24,16 @@ class Strict(BaseModel):
     model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
 
 
+class Point(BaseModel):
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+    label: str | None = Field(None, max_length=160)  # what the geocoder calls it, for the user to confirm
+
+
+# Fields that never go to a model: the device position is used only for the place search.
+PRIVATE = {"point", "from_me"}
+
+
 class Profile(Strict):
     """What we know about the event. Every field is optional until intake is done."""
 
@@ -38,6 +48,10 @@ class Profile(Strict):
     access: str = Field("", max_length=120)
     vibe: str = Field("", max_length=120)
     have: str = Field("", max_length=160)  # what the host already has: "a family priest, my aunt cooks"
+    # Set only when the user taps "Use my location": search around this point instead of the area
+    # text. Rounded on the device, used per request and never stored or logged by the server.
+    point: Point | None = None
+    from_me: bool = False
 
 
 # ---------- rules ----------
@@ -163,10 +177,6 @@ class Task(BaseModel):
     late: bool = False
     mandatory: bool = False
 
-
-class Point(BaseModel):
-    lat: float
-    lon: float
 
 
 class Plan(BaseModel):

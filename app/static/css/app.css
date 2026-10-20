@@ -165,6 +165,12 @@ h1:focus-visible,h2:focus-visible{outline:3px solid var(--focus);outline-offset:
 .drow dd{margin:0;overflow-wrap:anywhere}
 .drow.editing{grid-template-columns:150px minmax(0,1fr)}
 .drow .ans{margin:4px 0}
+.loc{margin:10px 0 0}
+.loc .btn{display:inline-flex;align-items:center;gap:8px}
+.loc .tt2{margin:6px 0 0;max-width:52ch}
+.areanote{margin:2px 0 0}
+.around{margin:0 0 10px;color:var(--muted)}
+.around b{color:var(--ink)}
 .howgot{margin-top:18px;border-top:1px solid var(--line);padding-top:12px}
 .howgot summary{min-height:44px;display:flex;align-items:center;cursor:pointer;font-weight:600;color:var(--saff)}
 
