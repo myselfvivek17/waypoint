@@ -45,6 +45,8 @@ function navView() {
       onClick: () => go(route, { focus: route === 'journey' ? 'stop' : route === 'chat' ? 'question' : 'h1' }) },
     route === 'day' ? dayLabel : label));
   }
+  const cur = nav.querySelector('[aria-current="page"]');  // on phones the steps swipe: keep this one in view
+  if (cur && nav.scrollWidth > nav.clientWidth) nav.scrollLeft = cur.offsetLeft - (nav.clientWidth - cur.offsetWidth) / 2;
 }
 
 function bannerView() {

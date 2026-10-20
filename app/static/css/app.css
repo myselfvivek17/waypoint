@@ -468,6 +468,14 @@ h1:focus-visible,h2:focus-visible{outline:3px solid var(--focus);outline-offset:
  .navb{padding:0 10px}
  .logo{font-size:26px}
  .hdr{gap:4px}
+ /* phones: logo and theme on one row, the steps on a second row that swipes sideways */
+ .hdin{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 8px}
+ .hdr{display:contents}
+ .logo{grid-column:1;grid-row:1;justify-self:start}
+ .themeb{grid-column:2;grid-row:1}
+ .nav{grid-column:1/-1;grid-row:2;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;margin:0 -20px;padding:0 20px 2px}
+ .nav::-webkit-scrollbar{display:none}
+ .navb{flex:none}
  .brow{grid-template-columns:90px minmax(0,1fr) auto}
  .drow,.drow.editing{grid-template-columns:minmax(0,1fr)}
  .drow dt{font-size:14px}

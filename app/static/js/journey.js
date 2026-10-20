@@ -404,7 +404,8 @@ function budgetBar(m, idx, reach) {
       h('button', { type: 'button', 'aria-disabled': i > reach ? 'true' : null, 'data-stop': x.key, 'data-price': x.price,
         onClick: () => (i > reach ? say('Decide the earlier stops first.') : openStop(i)) },
         h('span', { class: `sw ${x.decided ? 'd' : 'p'}`, 'aria-hidden': 'true' }),
-        x.status === 'skip' ? h('s', null, x.label) : x.label, x.status === 'skip' ? ' skipped' : ` ${inr(x.price)}`,
+        x.status === 'skip' ? h('s', null, x.label) : x.label,
+        x.status === 'skip' ? ' skipped' : x.status !== 'open' && !x.price ? ' yours' : ` ${inr(x.price)}`,
         h('span', { class: 'sr' }, x.status !== 'open' ? `, ${STATUS_WORD[x.status].toLowerCase()}` : x.decided ? ', decided' : ', suggestion'))))));
 }
 

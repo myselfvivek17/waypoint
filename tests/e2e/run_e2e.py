@@ -105,6 +105,14 @@ def flow(r: Run, dark: bool) -> None:
     suffix = "-dark" if dark else ""
     p.goto(BASE + "/?reset=1")
     expect(p.locator("h1")).to_have_text("Tell me what you're celebrating")
+    # Code from strings, as page script would run it (DevTools evaluation itself is exempt from CSP):
+    blocked = p.evaluate("""() => new Promise((done) => {
+        window.addEventListener('securitypolicyviolation', (e) => done(e.violatedDirective), { once: true });
+        window.__ran = false; setTimeout('window.__ran = true', 0);
+        setTimeout(() => done(window.__ran ? 'ran' : 'silent'), 800); })""")
+    assert blocked.startswith("script-src"), f"the CSP must block code from strings, got {blocked}"
+    p.wait_for_timeout(200)  # the browser also logs the block: that one console error is expected
+    r.errors = [e for e in r.errors if "Evaluating a string as JavaScript violates" not in e]
     if dark:
         p.click("#theme")
         assert p.evaluate("document.documentElement.dataset.theme") == "dark"
@@ -298,8 +306,7 @@ def flow(r: Run, dark: bool) -> None:
     p.click("nav >> text=Invite")
     expect(p.locator(".tone")).to_have_count(3, timeout=40000)
     card = p.locator("#card")
-    p.wait_for_function("document.getElementById('card').dataset.fit !== undefined")
-    assert card.get_attribute("data-fit") == "true", "the plan's own text must fit the card"
+    expect(card).to_have_attribute("data-fit", "true")  # the plan's own text fits the card
     p.locator(".tone").nth(1).click()
     p.fill("#inv-head", "Aadhya Venkatalakshmi Subramaniam-Ramachandran's very first birthday 🎂🎉👶🏽")
     p.locator(".chips button[lang=hi]").click()
@@ -335,6 +342,23 @@ def flow(r: Run, dark: bool) -> None:
     r.step("reload restores state")
     p.reload()
     expect(p.locator("h1")).to_be_visible()
+
+
+def mobile(r: Run, dark: bool) -> None:
+    """Every screen at phone width, in the current theme: no sideways scrolling, controls reachable."""
+    p = r.page
+    suffix = "-dark" if dark else ""
+    r.step("mobile: every screen at 390 px" + (" (dark)" if dark else ""))
+    p.set_viewport_size({"width": 390, "height": 844})
+    for route, ready in (("chat", ".details h1"), ("journey", "#prop-h, #fin-h"), ("day", ".tli"), ("plan", ".task"),
+                         ("invite", "#card")):
+        p.evaluate(f"location.hash = '{route}'")
+        expect(p.locator(ready).first).to_be_visible(timeout=20000)
+        p.wait_for_timeout(500)
+        over = p.evaluate("document.scrollingElement.scrollWidth - innerWidth")
+        assert over <= 1, f"{route}: {over}px of sideways scroll on a phone"
+        r.shot(f"mobile-{route}{suffix}")
+    p.set_viewport_size({"width": 1280, "height": 900})
 
 
 def edges(r: Run) -> None:
@@ -412,12 +436,6 @@ def edges(r: Run) -> None:
     q.screenshot(path=str(r.shots / "16-loading-reduced-motion.png"))
     rm.close()
 
-    r.step("mobile layout")
-    p.set_viewport_size({"width": 390, "height": 844})
-    p.goto(BASE + "/#journey")
-    expect(p.locator("#prop-h")).to_be_visible(timeout=20000)
-    r.shot("mobile-journey")
-    p.set_viewport_size({"width": 1280, "height": 900})
 
 
 def run_axe(browser, axe_path: Path, shots: Path) -> list:
@@ -432,13 +450,14 @@ def run_axe(browser, axe_path: Path, shots: Path) -> list:
         page.goto(BASE + "/")
         page.click("#view >> text=Aditya's 22nd birthday")
         page.wait_for_selector("#prop-h", timeout=160000)
-        for route in ("journey", "day", "plan", "chat", "welcome"):
+        for route in ("journey", "day", "plan", "invite", "chat", "welcome"):
             page.evaluate(f"location.hash = '{route}'")
-            page.wait_for_timeout(900)
+            page.wait_for_timeout(2500 if route == "invite" else 900)  # invite: let the texts arrive
             page.add_script_tag(content=src)
             res = page.evaluate("axe.run(document, {resultTypes: ['violations']})")
             for v in res["violations"]:
-                results.append((theme, route, v["impact"], v["id"], len(v["nodes"]), v["help"]))
+                results.append((theme, route, v["impact"], v["id"], len(v["nodes"]), v["help"],
+                                [(n["target"], n.get("failureSummary", "")[-120:]) for n in v["nodes"][:3]]))
         page.evaluate("location.hash = 'journey'")
         page.wait_for_timeout(600)
         page.click("#opt-btn")
@@ -471,9 +490,10 @@ def main() -> int:
                                           color_scheme="light")
                 ctx.grant_permissions(["clipboard-read", "clipboard-write"], origin=BASE)
                 r = Run(ctx.new_page(), shots)
-                r.n = 20 if dark else 0
+                r.n = 50 if dark else 0
                 try:
                     flow(r, dark)
+                    mobile(r, dark)
                     if not dark:
                         edges(r)
                 except Exception as exc:  # report and keep going so the summary is complete
