@@ -1,0 +1,406 @@
+"""Deterministic, explainable decision engine.
+
+Pure functions over a :class:`Profile`. Every decision is driven by a table at the top
+of this module and returns a plain-language "why" so the UI can show the rule behind
+each proposal. Nothing here calls the network or the model.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import re
+from dataclasses import dataclass, field
+
+from .schemas import Block, ChecklistItem, EventType, Insight, Profile, Way
+
+# ---------------------------------------------------------------- tables
+
+TIER1 = {
+    "mumbai", "delhi", "new delhi", "bengaluru", "bangalore", "hyderabad", "secunderabad",
+    "chennai", "kolkata", "pune", "gurugram", "gurgaon", "noida", "navi mumbai", "thane",
+}
+TIER2 = {
+    "jaipur", "lucknow", "ahmedabad", "kochi", "chandigarh", "indore", "udaipur", "surat",
+    "nagpur", "coimbatore", "bhopal", "visakhapatnam", "vizag", "mysuru", "mysore", "goa",
+    "vadodara", "jodhpur", "amritsar", "dehradun", "bhubaneswar", "guwahati", "madurai",
+    "thiruvananthapuram", "nashik", "ludhiana", "kanpur", "patna", "raipur", "ranchi",
+    "vijayawada", "mangaluru", "mangalore", "agra", "varanasi",
+}
+DEFAULT_TIER = 2
+
+# Per-guest spend for the whole event (food + space + decor), in rupees:
+# (floor, typical, generous). Below the floor the event cannot be done as described.
+PER_GUEST: dict[EventType, dict[int, tuple[int, int, int]]] = {
+    "birthday": {1: (600, 1500, 3000), 2: (500, 1200, 2500), 3: (400, 900, 2000)},
+    "wedding": {1: (1500, 5000, 12000), 2: (1200, 4000, 10000), 3: (1000, 3000, 8000)},
+    "house-warming": {1: (500, 1200, 2500), 2: (400, 1000, 2000), 3: (300, 800, 1600)},
+    "community": {1: (250, 600, 1500), 2: (200, 500, 1200), 3: (150, 400, 1000)},
+    "other": {1: (600, 1500, 3000), 2: (500, 1200, 2500), 3: (400, 900, 2000)},
+}
+
+BAND_ADVICE = {
+    "tight": [
+        "Pick a café or restaurant package so food and space come together.",
+        "A home, terrace or clubhouse saves the hall rental.",
+        "Digital invites instead of printed cards.",
+    ],
+    "comfortable": [
+        "Room for one splurge: a live counter or a photographer.",
+        "Keep about 5% aside for last-minute extras.",
+    ],
+    "generous": [
+        "A coordinator on the day frees the family to enjoy it.",
+        "Keep 10% aside; generous budgets drift upward.",
+    ],
+}
+
+# The stops on the journey, in order, per event type: (key, label).
+STOPS: dict[EventType, list[tuple[str, str]]] = {
+    "birthday": [("venue", "Venue"), ("theme", "Theme"), ("food", "Food"), ("cake", "Cake"),
+                 ("invites", "Invites"), ("day", "Day-of schedule")],
+    "wedding": [("venue", "Venue"), ("theme", "Theme"), ("food", "Food"), ("music", "Music"),
+                ("invites", "Invites"), ("day", "Day-of schedule")],
+    "house-warming": [("venue", "Space"), ("puja", "Puja"), ("food", "Food"), ("theme", "Decor"),
+                      ("invites", "Invites"), ("day", "Day-of schedule")],
+    "community": [("venue", "Venue"), ("theme", "Decor"), ("food", "Food"), ("sound", "Sound & stage"),
+                  ("invites", "Invites"), ("day", "Day-of schedule")],
+    "other": [("venue", "Venue"), ("theme", "Theme"), ("food", "Food"), ("cake", "Cake"),
+              ("invites", "Invites"), ("day", "Day-of schedule")],
+}
+
+# Share of the budget per stop. Each row sums to 0.95: 5% is always kept as a buffer.
+SPLIT: dict[EventType, dict[str, float]] = {
+    "birthday": {"venue": .30, "theme": .14, "food": .36, "cake": .06, "invites": .04, "day": .05},
+    "wedding": {"venue": .27, "theme": .17, "food": .25, "music": .12, "invites": .05, "day": .09},
+    "house-warming": {"venue": .10, "puja": .15, "food": .45, "theme": .12, "invites": .03, "day": .10},
+    "community": {"venue": .25, "theme": .15, "food": .35, "sound": .12, "invites": .03, "day": .05},
+    "other": {"venue": .30, "theme": .14, "food": .36, "cake": .06, "invites": .04, "day": .05},
+}
+BUFFER = 0.05
+
+# Days before the event by which each stop should be booked.
+LEAD: dict[EventType, dict[str, int]] = {
+    "birthday": {"venue": 21, "invites": 14, "theme": 10, "food": 10, "cake": 5, "day": 3},
+    "wedding": {"venue": 120, "food": 90, "theme": 60, "music": 60, "invites": 45, "day": 14},
+    "house-warming": {"puja": 21, "invites": 14, "food": 10, "theme": 7, "venue": 5, "day": 3},
+    "community": {"venue": 30, "invites": 21, "sound": 14, "food": 14, "theme": 10, "day": 5},
+    "other": {"venue": 21, "invites": 14, "theme": 10, "food": 10, "cake": 5, "day": 3},
+}
+
+TASK_VERBS = {
+    "venue": "Book the venue", "theme": "Order the decor", "food": "Confirm the food",
+    "cake": "Order the cake", "invites": "Send the invites", "day": "Share the run-sheet",
+    "music": "Book the music", "puja": "Book the priest and samagri", "sound": "Book sound and stage",
+}
+
+# (min_days_left_inclusive, urgency, advice). First match from the top wins.
+URGENCY = [
+    (60, "relaxed", "Plenty of time. Lock the venue first, then the rest can follow at an easy pace."),
+    (21, "on-track", "A comfortable runway. Book the long-lead items this week."),
+    (7, "tight", "Under three weeks. Book everything with a long lead time in the next few days."),
+    (0, "rush", "Less than a week. Favour places that bundle food and space, and send invites today."),
+]
+
+# month -> list of (flag, title, why, suggestion)
+SEASON: dict[int, list[tuple[str, str, str, str]]] = {}
+for _m in (6, 7, 8, 9):
+    SEASON.setdefault(_m, []).append((
+        "monsoon", "Monsoon month",
+        "June to September is monsoon across most of India, so an open-air plan needs a covered backup.",
+        "Prefer an indoor or covered venue, or budget a rain tent."))
+for _m in (11, 12, 1, 2):
+    SEASON.setdefault(_m, []).append((
+        "peak", "Peak wedding season",
+        "November to February is peak wedding season: good venues and caterers book out early and charge more.",
+        "Book the venue and caterer as early as you can."))
+for _m in (4, 5):
+    SEASON.setdefault(_m, []).append((
+        "heat", "Summer heat",
+        "April and May are very hot in most of India, so afternoon events outdoors are hard on guests.",
+        "Start in the evening and plan shade, fans and water."))
+
+# (max_guests_inclusive, venue size, catering mode)
+SIZE = [
+    (15, "home or a private dining room", "home-cooked food or an order-in"),
+    (40, "a café or restaurant private area", "a set menu or thali"),
+    (120, "a small banquet hall or terrace", "a buffet"),
+    (400, "a banquet hall or lawn", "a buffet with live counters"),
+    (10**9, "a large lawn or convention hall", "a multi-counter buffet with a catering crew"),
+]
+
+# (regex, checklist text, why, stop)
+FOOD_NEEDS = [
+    (r"\bjain\b", "Separate Jain counter and utensils",
+     "Jain guests avoid root vegetables, onion and garlic, so their food is cooked and served apart.", "food"),
+    (r"no onion|without onion|no garlic|satvik|sattvic", "Label satvik dishes (no onion or garlic)",
+     "Guests who skip onion and garlic need dishes they can trust at a glance.", "food"),
+    (r"\bvegan\b", "At least two vegan mains and a vegan dessert",
+     "Vegan guests skip dairy too, which rules out most Indian sweets and paneer dishes.", "food"),
+    (r"gluten|coeliac|celiac", "Gluten-free dishes kept apart",
+     "Gluten-free guests need dishes prepared away from rotis and naan.", "food"),
+    (r"\bnuts?\b|peanut", "Allergen labels on every dish",
+     "A nut allergy can be serious; every dish needs a clear label.", "food"),
+    (r"halal", "Halal certification confirmed with the caterer",
+     "Some guests eat only halal meat; ask the caterer for proof.", "food"),
+    (r"non[- ]?veg", "Separate veg and non-veg counters",
+     "Mixed menus need separate counters and serving spoons.", "food"),
+    (r"(?<!non[- ])(?<!non)\bveg(etarian)?\b|pure veg", "Pure-veg kitchen confirmed with the caterer",
+     "An all-vegetarian event needs a caterer who cooks no meat in the same kitchen.", "food"),
+    (r"diabet|sugar[- ]?free", "A sugar-free dessert option",
+     "Diabetic guests should have a dessert they can enjoy too.", "food"),
+]
+ACCESS_NEEDS = [
+    (r"wheelchair|step[- ]?free|\blift\b|elevator|ground floor|ramp", "Step-free entrance and a lift confirmed",
+     "Someone needs step-free access, so check the entrance, the lift and the washroom.", "venue"),
+    (r"elder|senior|grand(ma|pa|parent|mother|father)|\bold\b", "Reserved seating for elders away from speakers",
+     "Elders need chairs with backs, near the action but away from loud speakers.", "venue"),
+    (r"hearing|deaf", "Seat guests with hearing loss near the front; caption any videos",
+     "Guests with hearing loss follow speeches best from the front, with captions on videos.", "day"),
+    (r"vision|blind|low sight", "A clear, well-lit path and a helper at the entrance",
+     "Guests with low vision need a step-free, well-lit route and someone to guide them.", "venue"),
+    (r"\bkids?\b|child|toddler|baby", "A kids' corner and early food for children",
+     "Children eat earlier and need a safe corner to play.", "food"),
+]
+
+
+# ---------------------------------------------------------------- helpers
+
+def inr(n: int | float) -> str:
+    """Format rupees the Indian way: 1234567 -> '₹12,34,567'."""
+    n = int(round(n))
+    sign = "-" if n < 0 else ""
+    s = str(abs(n))
+    if len(s) > 3:
+        head, tail = s[:-3], s[-3:]
+        head = ",".join(re.findall(r"\d{1,2}", head[::-1]))[::-1]
+        s = head + "," + tail
+    return f"{sign}₹{s}"
+
+
+def city_tier(area: str) -> int:
+    """Return 1 (metro), 2 (large city) or 3 from the free-text area."""
+    text = area.lower()
+    if any(re.search(rf"\b{re.escape(c)}\b", text) for c in TIER1):
+        return 1
+    if any(re.search(rf"\b{re.escape(c)}\b", text) for c in TIER2):
+        return 2
+    return 3 if text.strip() else DEFAULT_TIER
+
+
+def stops_for(event_type: EventType) -> list[tuple[str, str]]:
+    return STOPS[event_type]
+
+
+def days_until(event_date: dt.date | None, today: dt.date) -> int | None:
+    return None if event_date is None else (event_date - today).days
+
+
+# ---------------------------------------------------------------- rule families
+
+def budget_band(p: Profile) -> tuple[str | None, Insight | None]:
+    """Classify budget per guest against the event-type/city-tier table."""
+    if not p.guests or p.budget is None:
+        return None, None
+    tier = city_tier(p.area)
+    floor, typical, generous = PER_GUEST[p.type][tier]
+    per = p.budget // p.guests
+    where = f"a tier-{tier} city" if p.area else "a typical Indian city"
+    if per < floor:
+        band, level = "impossible", "block"
+        why = (f"{inr(per)} a guest is below the {inr(floor)} floor for food, a space and basic decor "
+               f"for a {p.type} in {where}.")
+    elif per < typical:
+        band, level = "tight", "warn"
+        why = f"{inr(per)} a guest is tight: a catered {p.type} in {where} typically costs about {inr(typical)} a guest."
+    elif per < generous:
+        band, level = "comfortable", "info"
+        why = f"{inr(per)} a guest is comfortable for a {p.type} in {where} (typical is about {inr(typical)})."
+    else:
+        band, level = "generous", "info"
+        why = f"{inr(per)} a guest is generous for a {p.type} in {where}; {inr(generous)}+ allows premium choices."
+    titles = {"impossible": "Budget can't cover this", "tight": "Tight budget",
+              "comfortable": "Comfortable budget", "generous": "Generous budget"}
+    return band, Insight(id="budget", family="budget", level=level, title=titles[band], why=why,
+                         suggestions=BAND_ADVICE.get(band, []))
+
+
+def budget_block(p: Profile) -> Block | None:
+    """Three concrete ways out when the budget is below the floor."""
+    band, _ = budget_band(p)
+    if band != "impossible":
+        return None
+    assert p.guests and p.budget is not None
+    floor = PER_GUEST[p.type][city_tier(p.area)][0]
+    per = p.budget // p.guests
+    fit = max(4, p.budget // floor)
+    raise_to = -(-p.guests * floor // 100) * 100
+    return Block(
+        type="budget",
+        title=f"{inr(p.budget)} for {p.guests} guests is {inr(per)} a head.",
+        body="That won't stretch to food, a space and decor. Here are three ways to make it work:",
+        ways=[
+            Way(title=f"Keep {inr(p.budget)}, invite {fit}",
+                detail=f"Close friends and family only: about {inr(p.budget // fit)} a head.",
+                apply={"guests": fit}),
+            Way(title=f"Keep {p.guests} guests, raise to {inr(raise_to)}",
+                detail=f"{inr(floor)} a head is the floor for food, a space and basic decor here.",
+                apply={"budget": raise_to}),
+            Way(title="Keep both, go potluck",
+                detail="A clubhouse or community room, everyone brings a dish, you host tea and sweets.",
+                apply={"food": "Potluck + hosted tea and sweets", "budget": max(p.budget, p.guests * 35)}),
+        ],
+    )
+
+
+def date_block(p: Profile, today: dt.date) -> Block | None:
+    """A date in the past gets two ways out: same day next year, or pick again."""
+    if p.date is None or p.date >= today:
+        return None
+    try:
+        nxt = p.date.replace(year=today.year if p.date.replace(year=today.year) >= today else today.year + 1)
+    except ValueError:  # 29 Feb
+        nxt = p.date.replace(year=today.year + 1, day=28)
+    return Block(
+        type="date",
+        title=f"{p.date.day} {p.date:%b %Y} has already passed.",
+        body=f"Today is {today.day} {today:%b %Y}. Did you mean a later date?",
+        ways=[Way(title=f"Use {nxt.day} {nxt:%b %Y}", detail="Same day, next time it comes round.",
+                  apply={"date": nxt.isoformat()}),
+              Way(title="Pick another date", detail="I'll ask again.", apply=None)],
+    )
+
+
+def urgency(p: Profile, today: dt.date) -> tuple[str | None, list[str], list[str], Insight | None]:
+    """Days left -> urgency level, the order to book things in, and what is already late."""
+    d = days_until(p.date, today)
+    if d is None:
+        return None, [], [], None
+    lead = LEAD[p.type]
+    order = sorted(lead, key=lambda k: -lead[k])
+    late = [k for k in order if lead[k] > d]
+    if d < 0:
+        return "past", order, order, Insight(
+            id="timing", family="timing", level="block", title="Date has passed",
+            why="The date is in the past, so nothing can be booked for it.")
+    level, advice = next((name, adv) for lim, name, adv in URGENCY if d >= lim)
+    labels = dict(STOPS[p.type])
+    first = next((k for k in order if k not in late), order[-1])
+    parts = [f"{d} days to go: {advice}"]
+    if late:
+        names = ", ".join(labels[k].lower() for k in late)
+        parts.append(f"Usually booked earlier than this: {names}. Treat these as urgent.")
+    parts.append(f"Book the {labels[first].lower()} first; it needs about {lead[first]} days' notice.")
+    return level, order, late, Insight(
+        id="timing", family="timing", level="warn" if late or level in ("tight", "rush") else "info",
+        title={"relaxed": "Plenty of time", "on-track": "On track", "tight": "Short runway",
+               "rush": "Very little time"}[level],
+        why=" ".join(parts))
+
+
+def season(p: Profile) -> tuple[list[str], list[Insight]]:
+    """Month of the event -> monsoon / peak wedding season / summer heat flags."""
+    if p.date is None:
+        return [], []
+    flags, out = [], []
+    for flag, title, why, tip in SEASON.get(p.date.month, []):
+        flags.append(flag)
+        level = "warn" if flag == "monsoon" or (flag == "peak" and p.type == "wedding") else "info"
+        out.append(Insight(id=f"season-{flag}", family="season", level=level, title=title, why=why,
+                           suggestions=[tip]))
+    return flags, out
+
+
+def size(p: Profile) -> tuple[str | None, str | None, Insight | None]:
+    """Guest count -> venue size and catering mode."""
+    if not p.guests:
+        return None, None, None
+    venue, catering = next((v, c) for lim, v, c in SIZE if p.guests <= lim)
+    servers = max(1, -(-p.guests // 20))
+    why = (f"{p.guests} guests fit {venue}, served as {catering}. "
+           f"Plan about {servers} server{'s' if servers > 1 else ''} (one per 20 guests).")
+    return venue, catering, Insight(id="size", family="size", level="info", title="Size and catering", why=why)
+
+
+def needs(p: Profile) -> tuple[list[ChecklistItem], list[Insight]]:
+    """Dietary and accessibility answers -> mandatory checklist items."""
+    items: list[ChecklistItem] = []
+    for text, table, prefix in ((p.food, FOOD_NEEDS, "food"), (p.access, ACCESS_NEEDS, "access")):
+        low = text.lower()
+        if not low or re.search(r"\bno (special )?needs?\b|\bnone\b", low):
+            continue
+        for i, (pat, item, why, stop) in enumerate(table):
+            if re.search(pat, low):
+                items.append(ChecklistItem(id=f"{prefix}-{i}", text=item, why=why, stop=stop))
+    # "Veg" also matches inside "veg and non-veg": keep only the more specific item.
+    ids = {c.id for c in items}
+    nonveg = f"food-{[r[1] for r in FOOD_NEEDS].index('Separate veg and non-veg counters')}"
+    pureveg = f"food-{[r[1] for r in FOOD_NEEDS].index('Pure-veg kitchen confirmed with the caterer')}"
+    if nonveg in ids:
+        items = [c for c in items if c.id != pureveg]
+    insights = [Insight(id=f"need-{c.id}", family="needs", level="info", title=c.text, why=c.why) for c in items]
+    return items, insights
+
+
+# ---------------------------------------------------------------- aggregate
+
+@dataclass
+class RulesResult:
+    """Everything the planner and UI need from the rules, plus the explanations."""
+
+    tier: int
+    per_guest: int | None
+    band: str | None
+    days_left: int | None
+    urgency: str | None
+    book_order: list[str]
+    late: list[str]
+    season: list[str]
+    venue_size: str | None
+    catering: str | None
+    mandatory: list[ChecklistItem]
+    split: dict[str, float]
+    lead: dict[str, int]
+    insights: list[Insight] = field(default_factory=list)
+    blocks: list[Block] = field(default_factory=list)
+
+    def stop_rule(self, key: str, p: Profile) -> str:
+        """The deterministic rule behind a stop, shown under "Why?"."""
+        labels = dict(STOPS[p.type])
+        share = self.split.get(key, 0)
+        parts = []
+        if p.budget:
+            parts.append(f"Rule: {labels.get(key, key)} gets about {round(share * 100)}% of the budget "
+                         f"({inr(p.budget * share)}), with {round(BUFFER * 100)}% kept spare.")
+        if key == "venue":
+            if self.band and self.per_guest is not None:
+                parts.append(next(i.why for i in self.insights if i.id == "budget"))
+            if self.venue_size:
+                parts.append(f"{p.guests} guests fit {self.venue_size}.")
+            if "monsoon" in self.season:
+                parts.append("Monsoon month, so the venue must be covered.")
+        if key == "food" and self.catering:
+            parts.append(f"{p.guests} guests are best served as {self.catering}.")
+        for c in self.mandatory:
+            if c.stop == key:
+                parts.append(f"Must have: {c.text.lower()}.")
+        if key in self.lead and self.days_left is not None:
+            late = " That is already past, so it is urgent." if key in self.late else ""
+            parts.append(f"Book about {self.lead[key]} days ahead.{late}")
+        return " ".join(parts)
+
+
+def evaluate(p: Profile, today: dt.date) -> RulesResult:
+    """Run every rule family over the profile."""
+    band, b_ins = budget_band(p)
+    level, order, late, t_ins = urgency(p, today)
+    flags, s_ins = season(p)
+    venue, catering, z_ins = size(p)
+    mandatory, n_ins = needs(p)
+    insights = [i for i in (b_ins, t_ins) if i] + s_ins + ([z_ins] if z_ins else []) + n_ins
+    blocks = [b for b in (budget_block(p), date_block(p, today)) if b]
+    return RulesResult(
+        tier=city_tier(p.area), per_guest=(p.budget // p.guests) if p.guests and p.budget is not None else None,
+        band=band, days_left=days_until(p.date, today), urgency=level, book_order=order, late=late,
+        season=flags, venue_size=venue, catering=catering, mandatory=mandatory,
+        split=dict(SPLIT[p.type]), lead=dict(LEAD[p.type]), insights=insights, blocks=blocks,
+    )
