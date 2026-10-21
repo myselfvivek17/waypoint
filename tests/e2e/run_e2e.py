@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PORT = int(os.getenv("WP_E2E_PORT", "8791"))
 BASE = f"http://127.0.0.1:{PORT}"
 CHROME = os.getenv("WP_CHROME", "")
+LIVE = False  # --live: real model answers, so waits are longer and AI wording is not fixed
 
 
 def start_server(live: bool) -> subprocess.Popen:
@@ -481,11 +482,32 @@ def edges(r: Run) -> None:
 
 
 def tour_clear_of_target(p: Page, where: str) -> None:
-    """The popover sits beside the highlighted target and never overlaps it."""
+    """The popover sits beside the highlight ring and never overlaps it; the rest of the page is
+    dimmed by the ring's scrim."""
+    p.wait_for_timeout(350)  # the ring glides between steps
     gap = p.evaluate("""() => { const a = document.getElementById('tour').getBoundingClientRect(),
-        b = document.querySelector('.tour-on').getBoundingClientRect();
+        b = document.getElementById('tour-ring').getBoundingClientRect();
         return Math.max(b.top - a.bottom, a.top - b.bottom, b.left - a.right, a.left - b.right); }""")
     assert gap >= 0, f"{where}: the tour covers its target by {-gap}px"
+    shadow = p.evaluate("getComputedStyle(document.getElementById('tour-ring')).boxShadow")
+    assert "rgba" in shadow and "0px 0px 0px" in shadow, f"{where}: no scrim around the ring ({shadow})"
+
+
+def tour_points_at_buttons(p: Page, where: str) -> None:
+    """Step 2: the arrow's tip is over the Looks good button, and the ring hugs the three buttons
+    (not the wider action row)."""
+    m = p.evaluate("""() => {
+        const a = document.querySelector('#tour .tourarrow').getBoundingClientRect(),
+          ok = document.getElementById('ok-btn').getBoundingClientRect(),
+          ring = document.getElementById('tour-ring').getBoundingClientRect(),
+          bs = [...document.querySelectorAll('.prop .pact > button, .prop .pact > .mmenu > .morebtn')]
+            .map((b) => b.getBoundingClientRect());
+        const r = Math.max(...bs.map((b) => b.right)), l = Math.min(...bs.map((b) => b.left));
+        return { tip: a.left + a.width / 2, okL: ok.left, okR: ok.right, n: bs.length,
+                 slackL: l - ring.left, slackR: ring.right - r }; }""")
+    assert m["n"] == 3, f"{where}: expected 3 buttons, found {m['n']}"
+    assert m["okL"] <= m["tip"] <= m["okR"], f"{where}: the arrow does not point at Looks good: {m}"
+    assert 0 <= m["slackL"] <= 10 and 0 <= m["slackR"] <= 10, f"{where}: the ring is not tight: {m}"
 
 
 def both_widths(r: Run, name: str, at: str = "", full: bool = False) -> None:
@@ -520,7 +542,7 @@ def guided(r: Run, dark: bool) -> None:
     expect(tour).to_be_visible(timeout=5000)
     expect(tour).to_have_attribute("role", "dialog")
     expect(p.locator("#tour-next")).to_be_focused()
-    expect(tour).to_contain_text("1 of 3")
+    expect(tour.locator(".step")).to_contain_text("Tour 1/3")
     tour_clear_of_target(p, "tour step 1")
     both_widths(r, "v3-item2-tour-path" + sfx)
     p.keyboard.press("Tab")
@@ -528,15 +550,23 @@ def guided(r: Run, dark: bool) -> None:
     p.keyboard.press("Tab")
     assert p.evaluate("document.getElementById('tour').contains(document.activeElement)"), "focus must stay in the tour"
     p.click("#tour-next")
-    expect(tour).to_contain_text("2 of 3")
+    expect(tour.locator(".step")).to_contain_text("Tour 2/3")
     expect(p.locator(".tour-on")).to_have_count(1)
     tour_clear_of_target(p, "tour step 2")
+    tour_points_at_buttons(p, "tour step 2")
+    expect(tour.locator("#tour-b b")).to_have_text(["Looks good", "Show options", "More"])
     both_widths(r, "v3-item2-tour-actions" + sfx)
+    p.set_viewport_size({"width": 390, "height": 844})
+    p.wait_for_timeout(400)
+    tour_clear_of_target(p, "tour step 2 at 390 px")
+    tour_points_at_buttons(p, "tour step 2 at 390 px")
+    p.set_viewport_size({"width": 1280, "height": 900})
+    p.wait_for_timeout(300)
     p.click("#tour-back")
-    expect(tour).to_contain_text("1 of 3")
+    expect(tour.locator(".step")).to_contain_text("Tour 1/3")
     p.keyboard.press("ArrowRight")
     p.keyboard.press("ArrowRight")
-    expect(tour).to_contain_text("3 of 3")
+    expect(tour.locator(".step")).to_contain_text("Tour 3/3")
     tour_clear_of_target(p, "tour step 3")
     both_widths(r, "v3-item2-tour-budget" + sfx)
     p.keyboard.press("Escape")
@@ -549,7 +579,7 @@ def guided(r: Run, dark: bool) -> None:
     expect(tour).to_have_count(0)
     p.click("#help")
     expect(tour).to_be_visible()
-    expect(tour).to_contain_text("1 of 3")
+    expect(tour.locator(".step")).to_contain_text("Tour 1/3")
     p.click("#tour-skip")
     expect(tour).to_have_count(0)
     expect(p.locator("#help")).to_be_focused()
@@ -561,14 +591,14 @@ def guided(r: Run, dark: bool) -> None:
     r.step("tour: a short one on My plan and Invite, and ? points at the next step elsewhere")
     p.click("nav >> text=My plan")
     expect(tour).to_be_visible(timeout=5000)
-    expect(tour).to_contain_text("1 of 2")
+    expect(tour.locator(".step")).to_contain_text("Tour 1/2")
     tour_clear_of_target(p, "plan tour")
     both_widths(r, "v3-item2-tour-plan" + sfx)
     p.keyboard.press("Escape")
     one_next_step(p, "my plan")
     both_widths(r, "v3-item1-next-step-plan" + sfx, at="#guide")
     p.click("nav >> text=Invite")
-    expect(tour).to_be_visible(timeout=8000)
+    expect(tour).to_be_visible(timeout=90000 if LIVE else 8000)  # the tour waits for the three versions
     p.keyboard.press("Escape")
     p.click("nav >> text=Party day")
     p.wait_for_timeout(1000)
@@ -583,7 +613,14 @@ def guided(r: Run, dark: bool) -> None:
     r.step("the proposal ends with its choice in plain words, answered by the two buttons")
     ask = p.locator("#ask-q")
     text = ask.inner_text()
-    assert text.startswith("Want ") and "? Or I can show " in text, text
+    if LIVE:  # the model's line passed validators.clean_ask, or the rules' line replaced it
+        source = p.evaluate("import('/js/store.js').then((m) => m.state.plan.source)")
+        own = not re.fullmatch(r"Want this [\w ]+\? Or (I can show [\w ]+|tell me what you would change)\.", text)
+        print(f"  choice line ({'written by the model' if own else 'rules line'}; plan source {source}): {text}")
+        assert "?" in text and re.search(r"\bor\b", text, re.I) and not re.search(r"\d", text), text
+        assert len(text.split()) <= 18, text
+    else:
+        assert text.startswith("Want ") and "? Or I can show " in text, text
     expect(p.locator("#ok-btn")).to_have_attribute("aria-describedby", "ask-q")
     both_widths(r, "v3-item3-choice-line" + sfx, at="#ask-q")
     p.click("#opt-btn")
@@ -886,6 +923,8 @@ def main() -> int:
     args = ap.parse_args()
     shots = Path(args.shots)
     shots.mkdir(parents=True, exist_ok=True)
+    global LIVE
+    LIVE = args.live
     proc = start_server(args.live)
     failures: list[str] = []
     try:

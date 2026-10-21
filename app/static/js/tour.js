@@ -1,19 +1,27 @@
 /* First-time tours: small popovers anchored to the thing they explain, placed beside it (never on
-   top of it). Each screen's tour is shown once (localStorage); the header's "?" replays it. Tours
-   stay out of the way under ?demo= and in automated browsers unless asked for with ?tour=1. */
+   top of it). The rest of the page is dimmed by a soft scrim with a cut-out ring drawn tightly around
+   the target; the popover's arrow points at the one element the step names. Each screen's tour is
+   shown once (localStorage); the header's "?" replays it. Tours stay out of the way under ?demo= and
+   in automated browsers unless asked for with ?tour=1. */
 import { h } from './dom.js';
 import { state } from './store.js';
 
 const SEEN = 'waypoint:tours';
 const ASKED = 'waypoint:tour-asked';
 const GAP = 14;
+const PAD = 6;  // ring padding around the highlighted elements
 
+/* A step: ``at`` finds the target; ``ring`` (inside it) the elements the ring hugs, default the target
+   itself; ``point`` the element the arrow centres on, default the ring. Body parts given as
+   { b: 'text' } are the names of buttons, shown in bold. */
 const TOURS = {
   journey: [
     { at: '.scenewrap, .slist, .mapwrap', title: 'This is your route',
       body: 'Each stop is one decision, from today to the big day. You are on the glowing stop; decided stops get a tick.' },
-    { at: '.prop .pact, .fin .pact', title: 'Decide one stop at a time',
-      body: 'Looks good keeps my suggestion and moves on. Show options compares the alternatives. More has skip, I already have this and write my own.' },
+    { at: '.prop .pact', ring: ':scope > button, :scope > .mmenu > .morebtn', point: '#ok-btn',
+      title: 'Decide one stop at a time',
+      body: [{ b: 'Looks good' }, ' keeps it · ', { b: 'Show options' }, ' compares · ', { b: 'More' },
+        ' has Skip, I already have this, Write my own.'] },
     { at: '.bud', title: 'Your budget, live',
       body: 'Every choice updates this bar. Solid parts are decided, striped ones are still suggestions, and the red line is your budget.' },
   ],
@@ -51,6 +59,7 @@ export function initTours({ demo = false, asked = false, reset = false } = {}) {
   } catch (e) { /* storage blocked: tours simply show */ }
   allowed = asked || (!demo && !navigator.webdriver);
   window.addEventListener('resize', () => { if (tour) place(true); });
+  window.addEventListener('scroll', () => { if (tour) place(false); }, { passive: true });
 }
 
 /** One step for screens without a tour of their own: point at the screen's next step. */
@@ -63,6 +72,23 @@ const visible = (el) => !!(el && (el.offsetWidth || el.offsetHeight || el.getCli
 
 function target(step) {
   return [...document.querySelectorAll(step.at)].find(visible) || null;
+}
+
+/** The smallest box around ``els`` (viewport coordinates). */
+function union(els) {
+  const rs = els.map((e) => e.getBoundingClientRect());
+  const left = Math.min(...rs.map((r) => r.left)), top = Math.min(...rs.map((r) => r.top));
+  const right = Math.max(...rs.map((r) => r.right)), bottom = Math.max(...rs.map((r) => r.bottom));
+  return { left, top, right, bottom, width: right - left, height: bottom - top };
+}
+
+function parts(el, st, key) {
+  const found = st[key] ? [...el.querySelectorAll(st[key])].filter(visible) : [];
+  return found.length ? found : null;
+}
+
+function body(b) {
+  return typeof b === 'string' ? b : b.map((x) => (typeof x === 'string' ? x : h('b', null, x.b)));
 }
 
 export function tourOpen() { return !!tour; }
@@ -99,8 +125,10 @@ function close(returnFocus = true) {
   tour = null;
   markSeen(t.route);
   document.querySelectorAll('.tour-on').forEach((el) => el.classList.remove('tour-on'));
-  const box = document.getElementById('tour');
-  if (box) box.remove();
+  for (const id of ['tour', 'tour-ring']) {
+    const el = document.getElementById(id);
+    if (el) el.remove();
+  }
   document.removeEventListener('pointerdown', outside, true);
   if (!returnFocus) return;
   const to = t.back && t.back.isConnected && t.back !== document.body ? t.back : document.querySelector('#prop-h, #fin-h, #view h1');
@@ -137,36 +165,46 @@ function draw() {
   const box = h('div', { id: 'tour', class: 'tour', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'tour-h',
     'aria-describedby': 'tour-b', onKeydown: keys },
   h('span', { class: 'tourarrow', 'aria-hidden': 'true' }),
-  steps.length > 1 ? h('p', { class: 'step' }, `${i + 1} of ${steps.length}`) : null,
+  steps.length > 1 ? h('p', { class: 'step' },  // "Tour 2/3", so it is not read as "Stop 2 of 6"
+    h('span', { 'aria-hidden': 'true' }, `Tour ${i + 1}/${steps.length}`),
+    h('span', { class: 'sr' }, `Tour step ${i + 1} of ${steps.length}`)) : null,
   h('h2', { class: 'disp', id: 'tour-h' }, st.title),
-  h('p', { id: 'tour-b' }, st.body),
+  h('p', { id: 'tour-b' }, body(st.body)),
   h('div', { class: 'touract' },
     h('button', { class: 'linkb', id: 'tour-skip', type: 'button', onClick: () => close() }, last ? 'Close' : 'Skip tour'),
     h('span', { class: 'touram' },
       i > 0 ? h('button', { class: 'btn', id: 'tour-back', type: 'button', onClick: () => move(-1) }, 'Back') : null,
       h('button', { class: 'btn pri', id: 'tour-next', type: 'button', onClick: () => move(1) }, last ? 'Done' : 'Next'))));
+  if (!document.getElementById('tour-ring')) document.body.append(h('div', { id: 'tour-ring', class: 'tourring', 'aria-hidden': 'true' }));
   document.body.append(box);
   document.addEventListener('pointerdown', outside, true);
   place(true);
   document.getElementById('tour-next').focus({ preventScroll: true });
 }
 
-/** Put the popover above or below its target, whichever has room, so it never covers it. */
+/** Ring the target tightly, then put the popover above or below the ring, whichever has room, so it
+    never covers it, with the arrow centred on the element the step names. */
 function place(scroll) {
-  const box = document.getElementById('tour');
-  const el = box && target(tour.steps[tour.i]);
+  const box = document.getElementById('tour'), ring = document.getElementById('tour-ring');
+  const st = box && tour.steps[tour.i];
+  const el = st && target(st);
   if (!el) { if (box) close(false); return; }
   document.querySelectorAll('.tour-on').forEach((x) => x !== el && x.classList.remove('tour-on'));
   el.classList.add('tour-on');
   if (scroll) el.scrollIntoView({ block: 'center', inline: 'nearest' });
-  const r = el.getBoundingClientRect(), bw = box.offsetWidth, bh = box.offsetHeight;
+  const u = union(parts(el, st, 'ring') || [el]);
+  const r = { left: u.left - PAD, top: u.top - PAD, right: u.right + PAD, bottom: u.bottom + PAD };
+  Object.assign(ring.style, { top: r.top + scrollY + 'px', left: r.left + scrollX + 'px',
+    width: r.right - r.left + 'px', height: r.bottom - r.top + 'px' });
+  const aim = union(parts(el, st, 'point') || parts(el, st, 'ring') || [el]);
+  const aimX = aim.left + aim.width / 2, bw = box.offsetWidth, bh = box.offsetHeight;
   const below = innerHeight - r.bottom >= bh + GAP + 8 || r.top < bh + GAP + 8 && innerHeight - r.bottom >= r.top;
   const top = below ? r.bottom + GAP : r.top - GAP - bh;
-  const left = Math.min(Math.max(12, r.left + r.width / 2 - bw / 2), document.documentElement.clientWidth - bw - 12);
+  const left = Math.min(Math.max(12, aimX - bw / 2), document.documentElement.clientWidth - bw - 12);
   box.style.top = top + scrollY + 'px';
   box.style.left = left + scrollX + 'px';
   box.classList.toggle('above', !below);
-  box.querySelector('.tourarrow').style.left = Math.min(Math.max(18, r.left + r.width / 2 - left), bw - 18) + 'px';
+  box.querySelector('.tourarrow').style.left = Math.min(Math.max(18, aimX - left), bw - 18) + 'px';
   if (scroll) {  // keep the popover itself in view, without hiding the target behind the fold
     const b = box.getBoundingClientRect();
     if (b.bottom > innerHeight) window.scrollBy(0, b.bottom - innerHeight + 12);

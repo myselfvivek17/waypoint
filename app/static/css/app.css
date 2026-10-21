@@ -10,7 +10,7 @@
  --ink:#16202A;--cream:#FBF4E6;--paper:#FFFBF2;--sand:#F1E5CB;--line:#D9CBAA;--muted:#5B5448;
  --saff:#9A4A0C;--mari:#E8A317;--on-mari:#16202A;--focus:#16202A;--danger:#8A2B0E;--good:#2F5B3A;
  --placeholder:#6B6356;--dash:#8E8268;--pri-hover:#2A3A48;--field:#FFFFFF;
- --stripe1:#C9B88F;--stripe2:#E4D6B3;--knob:#8E8268;--scrim:rgba(22,32,42,.5);--busy-scrim:rgba(251,244,230,.72);
+ --stripe1:#C9B88F;--stripe2:#E4D6B3;--knob:#8E8268;--scrim:rgba(22,32,42,.5);--busy-scrim:rgba(251,244,230,.72);--tour-scrim:rgba(22,32,42,.34);
  --np1:#F7EEDB;--np2:#F3E8D1;--ph:#E9DDC4;--bplan:#C9B88F;
  /* night panels: journey scene, "next up" card, sheet header accents */
  --night:#16202A;--night-2:#1E2D39;--night-3:#26394A;--on-night:#FBF4E6;--night-dim:#CFC8B8;--night-step:#F0C262;
@@ -23,7 +23,7 @@
  --ink:#F3EAD8;--cream:#11181F;--paper:#18222C;--sand:#223140;--line:#4A5C6C;--muted:#D2C9B8;
  --saff:#F2A65E;--mari:#E8A317;--on-mari:#16202A;--focus:#F3EAD8;--danger:#FF9C7A;--good:#93D3A2;
  --placeholder:#C4BBAA;--dash:#9A8F7C;--pri-hover:#FFFFFF;--field:#0E141A;
- --stripe1:#4A5A66;--stripe2:#33434F;--knob:#6F7D88;--scrim:rgba(0,0,0,.6);--busy-scrim:rgba(10,16,22,.7);
+ --stripe1:#4A5A66;--stripe2:#33434F;--knob:#6F7D88;--scrim:rgba(0,0,0,.6);--busy-scrim:rgba(10,16,22,.7);--tour-scrim:rgba(0,0,0,.5);
  --np1:#1B2631;--np2:#16202A;--ph:#22303C;--bplan:#55636E;
  --night:#0A1016;--night-2:#142028;--night-3:#1B2B37;--on-night:#F3EAD8;--night-dim:#CFC8B8;--night-step:#F0C262;
  --map-bg:#1C2833;--map-park:#26392F;--map-water:#1E3A44;--map-block:#24323E;--map-road:#33424F;--map-edge:#3D4D5A;
@@ -74,7 +74,7 @@ h1:focus-visible,h2:focus-visible{outline:3px solid var(--focus);outline-offset:
 .tour.above .tourarrow{top:auto;bottom:-9px;transform:rotate(225deg)}
 .touract{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap}
 .touram{display:flex;gap:8px}
-.tour-on{outline:3px solid var(--mari)!important;outline-offset:4px}
+.tourring{position:absolute;z-index:64;pointer-events:none;border-radius:14px;outline:3px solid var(--mari);box-shadow:0 0 0 200vmax var(--tour-scrim);animation:fadein .3s ease both;transition:top .25s ease,left .25s ease,width .25s ease,height .25s ease}
 
 /* ---------- buttons, chips ---------- */
 .btn{min-height:44px;padding:0 22px;border-radius:999px;border:2px solid var(--ink);background:transparent;font-weight:600;cursor:pointer;transition:background .2s,transform .2s}
@@ -552,7 +552,7 @@ body:has(.sheetwrap) #view [data-next]{animation:none}
  body.printing-card #print-card{display:block}
  body.printing-card #print-card img{width:100%;max-height:100vh;object-fit:contain}
  :root{--ink:#16202A;--cream:#fff;--paper:#fff;--sand:#eee;--line:#bbb;--muted:#333;--night:#fff;--on-night:#16202A;--night-step:#9A4A0C}
- .hd,.acts,.busy,.toast,.tour,.chg,.jbar,.offb,.skip,.adjust,.next .btn,.sheetwrap{display:none!important}
+ .hd,.acts,.busy,.toast,.tour,.tourring,.chg,.jbar,.offb,.skip,.adjust,.next .btn,.sheetwrap{display:none!important}
  .plangrid{grid-template-columns:1fr 1fr;gap:24px}
  .next{border:1.5px solid #bbb}
  .task input{accent-color:#16202A}
