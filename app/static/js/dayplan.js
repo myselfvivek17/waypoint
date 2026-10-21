@@ -3,6 +3,7 @@ import { api, errorText } from './api.js';
 import { dayIcon } from './art.js';
 import { h, inr, longDate } from './dom.js';
 import { budgetLine, stopsModel, summary, taskRows } from './model.js';
+import { moreMenu } from './menu.js';
 import { applyAdjustment, pickItemAlt, setItemStatus, state, toggleTick } from './store.js';
 import { announce, go, guide, primary, say, stopThinking, think, todayIso, update } from './ui.js';
 
@@ -30,17 +31,16 @@ function itemControls(it) {
     ctl.push(h('button', { class: 'chip', id: 'di-' + it.id, type: 'button', onClick: () => set('keep') }, 'Keep it as planned',
       h('span', { class: 'sr' }, ': ' + it.title)));
   } else {
+    // a moment shows only "Show options"; skip, already sorted and my own words are under More
     ctl.push(
-      h('button', { class: 'chip', id: 'di-' + it.id, type: 'button', onClick: () => set('skip') }, 'Skip', h('span', { class: 'sr' }, ' ' + it.title)),
-      h('button', { class: 'chip', type: 'button', 'aria-expanded': String(form === 'have'),
-        onClick: () => update({ dayForm: form === 'have' ? null : { id: it.id, kind: 'have' }, dayDraft: '' }, { focus: 'dd-in' }) },
-      'I already have this', h('span', { class: 'sr' }, ': ' + it.title)),
       it.alts && it.alts.length ? h('button', { class: 'chip', type: 'button', 'aria-expanded': String(state.dayAlts === it.id),
         onClick: () => update({ dayAlts: state.dayAlts === it.id ? null : it.id, dayForm: null }, { focus: null }) },
       'Show options', h('span', { class: 'sr' }, ' for ' + it.title)) : null,
-      h('button', { class: 'chip', type: 'button', 'aria-expanded': String(form === 'own'),
-        onClick: () => update({ dayForm: form === 'own' ? null : { id: it.id, kind: 'own' }, dayDraft: '' }, { focus: 'dd-in' }) },
-      'Write my own', h('span', { class: 'sr' }, ' instead of ' + it.title)));
+      moreMenu('di-' + it.id, [
+        { label: 'Skip this moment', onSelect: () => set('skip') },
+        { label: 'I already have this', onSelect: () => update({ dayForm: { id: it.id, kind: 'have' }, dayDraft: '', dayAlts: null }, { focus: 'dd-in' }) },
+        { label: 'Write my own', onSelect: () => update({ dayForm: { id: it.id, kind: 'own' }, dayDraft: '', dayAlts: null }, { focus: 'dd-in' }) },
+      ], { cls: 'chip', describe: 'for ' + it.title }));
   }
   return [h('div', { class: 'dctl', role: 'group', 'aria-label': 'Change this moment' }, ctl),
     state.dayAlts === it.id ? h('ul', { class: 'dalts', 'aria-label': 'Other ways to do this' }, it.alts.map((a) => h('li', null,

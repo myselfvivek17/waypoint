@@ -354,15 +354,21 @@ body:has(.sheetwrap) #view [data-next]{animation:none}
 .chg{margin-top:14px;padding:16px;border-radius:16px;border:1.5px solid var(--line);background:var(--paper);animation:rise .3s ease both}
 .chgmsg{margin:10px 0 0;color:var(--muted)}
 .fin{padding:40px 0;max-width:640px}
-/* user choice: skip / already have / write my own, ways of doing a stop, added stops */
-.choice{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 4px}
-.choice .chip{min-height:44px;font-size:15px;padding:0 14px}
-.chip.quiet{border-style:dashed;color:var(--muted)}
+/* user choice: "More ▾" (skip / already have / write my own / remove), ways of doing a stop, added stops */
+.mmenu{position:relative;display:inline-block}
+.menu{position:absolute;z-index:40;top:calc(100% + 6px);left:0;min-width:230px;list-style:none;margin:0;padding:6px;border-radius:16px;background:var(--paper);border:2px solid var(--ink);box-shadow:0 14px 32px rgba(10,16,22,.2);animation:rise .2s ease both}
+.menu.right{left:auto;right:0}
+.menui{display:block;width:100%;min-height:44px;padding:0 14px;border:0;border-radius:10px;background:none;text-align:left;font-weight:600;white-space:nowrap;cursor:pointer}
+.menui:hover,.menui:focus-visible{background:var(--sand)}
+.menui:focus-visible{outline-offset:-3px}
+.menui.danger{color:var(--danger)}
+.chghd{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.rmq{margin:0 0 10px;font-weight:600}
 .chip[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:var(--cream)}
 .choiceform{display:grid;gap:6px;max-width:520px}
 .flab{font-weight:600;font-size:15px}
 .choiceform .pact{margin-top:6px}
-.modes{margin:12px 0 4px;padding:12px 0 0;border-top:1px solid var(--line)}
+.modes{margin:14px 0 4px;padding:6px 0 0;border-top:1px solid var(--line)}
 .modeh{margin:0;font-weight:700;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .modes .chips{margin:8px 0 4px}
 .modewhy{margin:0;max-width:56ch}

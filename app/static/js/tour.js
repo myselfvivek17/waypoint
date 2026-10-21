@@ -13,7 +13,7 @@ const TOURS = {
     { at: '.scenewrap, .slist, .mapwrap', title: 'This is your route',
       body: 'Each stop is one decision, from today to the big day. You are on the glowing stop; decided stops get a tick.' },
     { at: '.prop .pact, .fin .pact', title: 'Decide one stop at a time',
-      body: 'Looks good keeps my suggestion and moves on. Show options compares the alternatives. You can come back and change anything.' },
+      body: 'Looks good keeps my suggestion and moves on. Show options compares the alternatives. More has skip, I already have this and write my own.' },
     { at: '.bud', title: 'Your budget, live',
       body: 'Every choice updates this bar. Solid parts are decided, striped ones are still suggestions, and the red line is your budget.' },
   ],

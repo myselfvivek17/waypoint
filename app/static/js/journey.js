@@ -6,6 +6,7 @@ import { h, inr, s, safeUrl } from './dom.js';
 import { chipDefs } from './intake.js';
 import { allOptions, budgetLine, lineTotal, maxReach, nextIndex, stopsModel, summary } from './model.js';
 import { applyAdjustment, chooseOption, confirmStop, setStopStatus, state } from './store.js';
+import { moreMenu } from './menu.js';
 import { tourOpen } from './tour.js';
 import { announce, go, guide, later, primary, rerender, say, stopThinking, think, update } from './ui.js';
 
@@ -274,24 +275,35 @@ async function addStop(name) {
 }
 
 async function removeStop(cur) {
-  if (state.confirmRemove !== cur.key) {
-    update({ confirmRemove: cur.key }, { focus: 'rm-btn' });
-    later(() => { if (state.confirmRemove === cur.key) update({ confirmRemove: null }, { focus: null }); }, 5000);
-    return;
-  }
   const d = await runOps([{ op: 'remove_stop', stop: cur.key }], `Re-planning without the ${cur.label.toLowerCase()}…`);
   update({ confirmRemove: null }, { focus: 'stop' });
   if (d) say(d.title + (d.freed ? `: ${inr(d.freed)} freed.` : '.'));
+}
+
+/** "Remove stop" from the More menu asks once, in the page, before re-planning. */
+function removeConfirm(cur) {
+  if (state.confirmRemove !== cur.key) return null;
+  const label = cur.label.toLowerCase();
+  return h('div', { class: 'chg rmconf', role: 'group', 'aria-labelledby': 'rm-h' },
+    h('p', { id: 'rm-h', class: 'rmq' }, `Remove the ${label} from the route? Its budget and task go too.`),
+    h('div', { class: 'pact' },
+      h('button', { class: 'btn pri', id: 'rm-yes', type: 'button', disabled: state.busy, onClick: () => removeStop(cur) }, `Remove the ${label}`),
+      h('button', { class: 'btn', id: 'rm-no', type: 'button', onClick: () => update({ confirmRemove: null }, { focus: 'more-stop' }) }, 'Keep it')));
 }
 
 function modePicker(cur) {
   const st = cur.s;
   if (!st.modes || !st.modes.length) return null;
   const row = st.modes.find((x) => x.id === st.mode);
+  const open = state.modesFor === cur.key;
   return h('div', { class: 'modes', role: 'group', 'aria-labelledby': 'mode-h' },
-    h('p', { class: 'modeh', id: 'mode-h' }, 'How do you want to do this? ', h('span', { class: 'aitag' }, 'Rules engine, not AI')),
-    h('div', { class: 'chips' }, st.modes.map((x) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(x.id === st.mode),
-      disabled: state.busy, onClick: () => setMode(cur, x.id) }, x.label))),
+    h('p', { class: 'modeh', id: 'mode-h' }, 'How: ', h('b', null, row ? row.label : 'not set'), ' ',
+      h('button', { class: 'linkb', id: 'mode-btn', type: 'button', 'aria-expanded': String(open), 'aria-controls': 'mode-list',
+        onClick: () => update({ modesFor: open ? null : cur.key }, { focus: 'mode-btn' }) },
+      open ? 'Done' : 'Change how', h('span', { class: 'sr' }, ` the ${cur.label.toLowerCase()} is done`)),
+      h('span', { class: 'aitag' }, 'Rules engine, not AI')),
+    open ? h('div', { class: 'chips', id: 'mode-list' }, st.modes.map((x) => h('button', { class: 'chip', type: 'button', 'aria-pressed': String(x.id === st.mode),
+      disabled: state.busy, onClick: () => setMode(cur, x.id) }, x.label))) : null,
     row ? h('p', { class: 'tt2 modewhy' }, row.why) : null);
 }
 
@@ -314,21 +326,20 @@ function choiceForm(m, cur) {
       onInput: (e) => { state.choiceCost = e.target.value; } }),
     state.choiceMsg ? h('p', { class: 'err', role: 'alert' }, state.choiceMsg) : null,
     h('div', { class: 'pact' }, h('button', { class: 'btn pri', type: 'submit' }, kind === 'have' ? 'Mark as mine' : 'Use my words'),
-      h('button', { class: 'btn', type: 'button', onClick: () => update({ choiceForm: null, choiceMsg: '' }, { focus: 'ch-' + kind }) }, 'Cancel')));
+      h('button', { class: 'btn', type: 'button', onClick: () => update({ choiceForm: null, choiceMsg: '' }, { focus: 'more-stop' }) }, 'Cancel')));
 }
 
-function choiceRow(m, cur) {
-  const open = (kind) => update({ choiceForm: state.choiceForm === kind ? null : kind, choiceNote: kind === 'have' ? '' : '',
-    choiceCost: '', choiceMsg: '' }, { focus: state.choiceForm === kind ? null : 'ch-note' });
-  return [h('div', { class: 'choice', role: 'group', 'aria-label': `Other ways to handle the ${cur.label.toLowerCase()}` },
-    h('button', { class: 'chip', id: 'ch-skip', type: 'button', onClick: () => setStatus(m, cur, 'skip') }, 'Skip'),
-    h('button', { class: 'chip', id: 'ch-have', type: 'button', 'aria-expanded': String(state.choiceForm === 'have'), 'aria-controls': 'choice-form',
-      onClick: () => open('have') }, 'I already have this'),
-    h('button', { class: 'chip', id: 'ch-own', type: 'button', 'aria-expanded': String(state.choiceForm === 'own'), 'aria-controls': 'choice-form',
-      onClick: () => open('own') }, 'Write my own'),
-    h('button', { class: 'chip quiet', id: 'rm-btn', type: 'button', onClick: () => removeStop(cur) },
-      state.confirmRemove === cur.key ? `Tap again to remove the ${cur.label.toLowerCase()}` : 'Remove stop')),
-  choiceForm(m, cur)];
+/** Everything else you can do with a stop, one tap away in "More ▾". */
+function stopMenu(m, cur) {
+  const label = cur.label.toLowerCase();
+  const form = (kind) => update({ choiceForm: kind, choiceNote: '', choiceCost: '', choiceMsg: '', confirmRemove: null }, { focus: 'ch-note' });
+  return moreMenu('more-stop', [
+    { id: 'ch-skip', label: 'Skip this stop', onSelect: () => setStatus(m, cur, 'skip') },
+    { id: 'ch-have', label: 'I already have this', onSelect: () => form('have') },
+    { id: 'ch-own', label: 'Write my own', onSelect: () => form('own') },
+    { id: 'ch-change', label: 'Describe a change', onSelect: () => update({ change: true, changeMsg: '', choiceForm: null }, { focus: 'c-in' }) },
+    { id: 'rm-btn', label: 'Remove stop', danger: true, onSelect: () => update({ confirmRemove: cur.key, choiceForm: null }, { focus: 'rm-yes' }) },
+  ], { describe: `ways to handle the ${label}` });
 }
 
 function statusCard(m, idx) {
@@ -356,11 +367,15 @@ function statusCard(m, idx) {
         primary({ id: 'ok-btn', onClick: next }, 'Continue'),
         h('button', { class: 'btn', id: 'restore-btn', type: 'button', onClick: () => restore(cur) },
           st.status === 'skip' ? `Bring the ${label} back` : 'Show me suggestions again'),
-        st.status !== 'skip' ? h('button', { class: 'btn', type: 'button',
-          onClick: () => { setStopStatus(cur.key, 'open'); update({ choiceForm: st.status, choiceNote: st.note, choiceCost: st.user_cost == null ? '' : String(st.user_cost) }, { focus: 'ch-note' }); } }, 'Edit') : null),
+        moreMenu('more-stop', [
+          st.status !== 'skip' ? { id: 'ch-edit', label: 'Edit what I wrote', onSelect: () => {
+            setStopStatus(cur.key, 'open');
+            update({ choiceForm: st.status, choiceNote: st.note, choiceCost: st.user_cost == null ? '' : String(st.user_cost) }, { focus: 'ch-note' });
+          } } : null,
+          { id: 'rm-btn', label: 'Remove stop', danger: true, onSelect: () => update({ confirmRemove: cur.key }, { focus: 'rm-yes' }) },
+        ], { describe: `ways to handle the ${label}` })),
       hintBox(cur),
-      h('div', { class: 'choice' }, h('button', { class: 'chip quiet', id: 'rm-btn', type: 'button', onClick: () => removeStop(cur) },
-        state.confirmRemove === cur.key ? `Tap again to remove the ${label}` : 'Remove stop'))));
+      removeConfirm(cur)));
 }
 
 function addPanel() {
@@ -677,10 +692,10 @@ function proposal(m, idx) {
         primary({ id: 'ok-btn', 'aria-describedby': 'ask-q', onClick: () => lookGood(m) }, cur.decided ? 'Keep and continue' : 'Looks good'),
         h('button', { class: 'btn', id: 'opt-btn', type: 'button', disabled: !alts.length,
           onClick: () => update({ sheet: true, changeMsg: '' }, { focus: 'sheet' }) }, 'Show options'),
-        h('button', { class: 'btn', type: 'button', 'aria-expanded': String(state.change), 'aria-controls': 'chg',
-          onClick: () => update({ change: !state.change, changeMsg: '' }, { focus: state.change ? null : 'c-in' }) }, 'Change')),
+        stopMenu(m, cur)),
       hintBox(cur),
-      choiceRow(m, cur),
+      choiceForm(m, cur),
+      removeConfirm(cur),
       modePicker(cur),
       h('button', { class: 'linkb', type: 'button', 'aria-expanded': String(state.why), 'aria-controls': 'why',
         onClick: () => update({ why: !state.why }) }, 'Why?'),
@@ -688,7 +703,8 @@ function proposal(m, idx) {
         it.why ? h('p', null, h('b', null, ai ? 'Why the AI picked this' : 'Why this'), it.why) : null,
         st.rule ? h('p', null, h('b', null, 'The rule behind it'), st.rule) : null) : null,
       state.change ? h('div', { class: 'chg', id: 'chg' },
-        h('p', { style: { margin: '0 0 4px', fontWeight: '600' } }, 'What would you change?'),
+        h('div', { class: 'chghd' }, h('p', { style: { margin: '0 0 4px', fontWeight: '600' } }, 'What would you change?'),
+          h('button', { class: 'linkb', type: 'button', onClick: () => update({ change: false, changeMsg: '' }, { focus: 'more-stop' }) }, 'Close')),
         kinds.length ? h('div', { class: 'chips', role: 'group', 'aria-label': 'Change this by' },
           kinds.map((k) => h('button', { class: 'chip', type: 'button', onClick: () => changeBy(m, k) }, k))) : null,
         h('form', { class: 'ans', onSubmit: (e) => { e.preventDefault(); submitChange(m); } },
@@ -808,7 +824,7 @@ function guideText(m, idx) {
     return `${at}: the ${label} is ${cur.status === 'skip' ? 'skipped' : 'yours'}. Tap Continue ${m.every((x) => x.decided) ? 'to finish the route' : 'for the next stop'}.`;
   }
   const doing = cur.decided ? `the ${label} is decided` : `${VERB[cur.key] || 'decide the'} ${label}`;
-  const other = allOptions(cur.s).length > 1 ? 'Show options to compare' : 'Change to ask for something else';
+  const other = allOptions(cur.s).length > 1 ? 'Show options to compare' : 'More for other ways';
   return `${at}: ${doing}. Tap ${cur.decided ? 'Keep and continue' : 'Looks good'}, or ${other}.`;
 }
 

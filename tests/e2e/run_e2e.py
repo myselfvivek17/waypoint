@@ -78,6 +78,12 @@ def assert_no_null_text(page: Page) -> None:
         assert bad not in text, f"'{bad}' rendered in the page"
 
 
+def more(p: Page, item: str, menu: str = "#more-stop") -> None:
+    """Pick an action from a "More ▾" menu."""
+    p.click(menu)
+    p.click(item)
+
+
 def one_next_step(p: Page, where: str) -> str:
     """Exactly one primary action on the screen, and a guide line under the title that names it."""
     found = p.evaluate("""() => {
@@ -246,19 +252,20 @@ def flow(r: Run, dark: bool) -> None:
 
     r.step("user choice: skip, a stop's way of doing it, already have, write my own, add a stop")
     expect(p.locator("#prop-h")).to_be_visible()
-    p.click("#ch-skip")                                   # the theme
+    more(p, "#ch-skip")                                   # the theme
     expect(p.locator(".budlist")).to_contain_text("skipped")
     expect(p.locator(".bud")).to_contain_text("freed by skipping")
-    p.locator(".modes button", has_text="Cook at home").click()   # the food
+    p.click("#mode-btn")                                  # the food
+    p.locator(".modes button", has_text="Cook at home").click()
     expect(p.locator(".modes button[aria-pressed=true]")).to_have_text("Cook at home", timeout=30000)
     expect(p.locator(".modewhy")).to_contain_text("groceries")
     r.shot("food-cook-at-home" + suffix, full=False)
-    p.click("#ch-have")
+    more(p, "#ch-have")
     p.fill("#ch-note", "Meera aunty's kitchen")
     p.fill("#ch-cost", "3000")
     p.click("#choice-form >> text=Mark as mine")
     expect(p.locator("#prop-h")).not_to_have_text("Meera aunty's kitchen")   # moved on to the cake
-    p.click("#ch-own")
+    more(p, "#ch-own")
     p.fill("#ch-note", "My cousin bakes a chocolate cake")
     p.click("#choice-form >> text=Use my words")
     p.click("#add-btn")
@@ -297,11 +304,13 @@ def flow(r: Run, dark: bool) -> None:
     r.step("event day: every moment can be skipped, covered, swapped or rewritten")
     p.click("#view button >> text=See the event day")
     expect(p.locator(".tli").first).to_be_visible()
-    p.locator(".tli").nth(1).locator(".dctl button", has_text="Skip").click()
+    p.locator(".tli").nth(1).locator(".morebtn").click()
+    p.locator("[role=menuitem]", has_text="Skip this moment").click()
     expect(p.locator(".tli.skip")).to_have_count(1)
     p.locator(".tli").nth(0).locator(".dctl button", has_text="Show options").click()
     p.locator(".dalts button").first.click()
-    p.locator(".tli").nth(3).locator(".dctl button", has_text="Write my own").click()
+    p.locator(".tli").nth(3).locator(".morebtn").click()
+    p.locator("[role=menuitem]", has_text="Write my own").click()
     p.fill("#dd-in", "Antakshari with the cousins")
     p.press("#dd-in", "Enter")
     expect(p.locator(".tl")).to_contain_text("Antakshari with the cousins")
@@ -621,12 +630,79 @@ def guided(r: Run, dark: bool) -> None:
     assert 0 <= scene["y"] - (box["y"] + box["height"]) < 40, "it should sit right above the path"
     both_widths(r, "v3-item6-hurry" + sfx, at=".hurry")
 
+    r.step("fewer buttons: Looks good and Show options, everything else under More (keyboard menu)")
+    pact = p.locator(".prop .pact").first
+    shown = [t.split("\n")[0] for t in pact.locator("button:visible").all_inner_texts()]
+    assert shown == ["Looks good", "Show options", "More"], shown
+    expect(p.locator(".prop .chip:visible")).to_have_count(0)
+    btn = p.locator("#more-stop")
+    expect(btn).to_have_attribute("aria-haspopup", "menu")
+    btn.focus()
+    p.keyboard.press("Enter")
+    expect(btn).to_have_attribute("aria-expanded", "true")
+    expect(p.locator("#more-stop-m")).to_have_attribute("role", "menu")
+    expect(p.locator("#ch-skip")).to_be_focused()
+    p.keyboard.press("ArrowDown")
+    expect(p.locator("#ch-have")).to_be_focused()
+    p.keyboard.press("End")
+    expect(p.locator("#rm-btn")).to_be_focused()
+    p.keyboard.press("ArrowDown")
+    expect(p.locator("#ch-skip")).to_be_focused()
+    p.keyboard.press("ArrowUp")
+    expect(p.locator("#rm-btn")).to_be_focused()
+    p.keyboard.press("Escape")
+    expect(p.locator("#more-stop-m")).to_have_count(0)
+    expect(btn).to_be_focused()
+    p.keyboard.press("ArrowDown")
+    expect(p.locator("#ch-skip")).to_be_focused()
+    p.keyboard.press("Escape")
+    p.click("#more-stop")
+    both_widths(r, "v3-item7-more-menu" + sfx, at="#more-stop-m")
+    p.mouse.click(5, 300)                                  # a press outside closes it
+    expect(p.locator("#more-stop-m")).to_have_count(0)
+    one_next_step(p, "journey with fewer buttons")
+
+    r.step("More menu actions still work: skip, I already have this, write my own, remove")
+    more(p, "#ch-skip")                                    # the theme
+    expect(p.locator(".budlist")).to_contain_text("Theme skipped")
+    expect(p.locator(".node.now .nl")).to_contain_text("Food")
+    more(p, "#ch-have")
+    p.fill("#ch-note", "Meera aunty's kitchen")
+    p.click("#choice-form button[type=submit]")
+    expect(p.locator(".node.now .nl")).to_contain_text("Cake")
+    more(p, "#ch-own")
+    p.fill("#ch-note", "My cousin bakes a chocolate cake")
+    p.click("#choice-form button[type=submit]")
+    expect(p.locator(".node.now .nl")).to_contain_text("Invites")
+    more(p, "#rm-btn")
+    expect(p.locator("#rm-yes")).to_be_focused()
+    both_widths(r, "v3-item7-remove-confirm" + sfx, at="#rm-yes")
+    p.click("#rm-yes")
+    expect(p.locator(".node")).to_have_count(5, timeout=30000)
+    expect(p.locator(".node .nl", has_text="Invites")).to_have_count(0)
+    p.click("nav >> text=My plan")
+    expect(p.locator(".tasks")).to_contain_text("Confirm with Meera aunty's kitchen")
+    expect(p.locator(".tasks")).to_contain_text("My cousin bakes a chocolate cake")
+    p.click("nav >> text=Journey")
+
     r.step("plan the rest: every stop decided, and each can still be reopened")
     p.click("#rest-btn")
     expect(p.locator("#fin-h")).to_be_visible(timeout=30000)
     expect(p.locator(".hurry")).to_have_count(0)
-    p.locator(".node").nth(2).click()
+    p.locator(".node").nth(0).click()
     expect(p.locator("#ok-btn")).to_have_text("Keep and continue")
+
+    r.step("event-day moments: Show options visible, the rest under More")
+    p.click("nav >> text=Party day")
+    first = p.locator(".tli").first
+    shown = [t.split("\n")[0] for t in first.locator(".dctl button:visible").all_inner_texts()]
+    assert shown in (["Show options", "More"], ["More"]), shown
+    first.locator(".morebtn").click()
+    expect(p.locator("[role=menu] [role=menuitem]")).to_have_count(3)
+    both_widths(r, "v3-item7-day-more" + sfx, at=".tli .menu")
+    p.locator("[role=menuitem]", has_text="Skip this moment").click()
+    expect(p.locator(".tli.skip")).to_have_count(1)
+    expect(first.locator("button", has_text="Keep it as planned")).to_be_focused()
 
 
 def run_axe(browser, axe_path: Path, shots: Path) -> list:
@@ -658,6 +734,23 @@ def run_axe(browser, axe_path: Path, shots: Path) -> list:
         for v in res["violations"]:
             results.append((theme, "sheet", v["impact"], v["id"], len(v["nodes"]), v["help"],
                             [(n["target"], n.get("failureSummary", "")[-120:]) for n in v["nodes"][:4]]))
+        page.keyboard.press("Escape")
+        # the v3 guidance states: the tour popover, the More menu on a stop and on a moment
+        for name, open_it, close_it in (
+                ("tour", lambda: page.click("#help"), "#tour-skip"),
+                ("more-menu", lambda: page.click("#more-stop"), "#more-stop"),
+                ("day-menu", lambda: (page.evaluate("location.hash = 'day'"), page.wait_for_timeout(900),
+                                      page.locator(".tli .morebtn").first.click()), None)):
+            open_it()
+            page.wait_for_timeout(700)
+            assert page.locator("#tour, [role=menu]").count() == 1, f"{name} did not open"
+            page.add_script_tag(content=src)
+            res = page.evaluate("axe.run(document, {resultTypes: ['violations']})")
+            for v in res["violations"]:
+                results.append((theme, name, v["impact"], v["id"], len(v["nodes"]), v["help"],
+                                [(n["target"], n.get("failureSummary", "")[-120:]) for n in v["nodes"][:4]]))
+            if close_it:
+                page.click(close_it)
     ctx.close()
     return results
 
