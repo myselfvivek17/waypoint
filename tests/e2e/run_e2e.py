@@ -477,13 +477,16 @@ def tour_clear_of_target(p: Page, where: str) -> None:
     assert gap >= 0, f"{where}: the tour covers its target by {-gap}px"
 
 
-def both_widths(r: Run, name: str, full: bool = False) -> None:
-    """One screenshot at laptop width and one at phone width, of the screen as it is now."""
+def both_widths(r: Run, name: str, at: str = "", full: bool = False) -> None:
+    """One screenshot at laptop width and one at phone width, of the screen as it is now, with the
+    element ``at`` (if given) scrolled into the middle of the view."""
     p = r.page
-    r.shot(name, full=full)
-    p.set_viewport_size({"width": 390, "height": 844})
-    p.wait_for_timeout(400)
-    r.shot(name + "-390", full=full)
+    for width, height, tail in ((1280, 900, ""), (390, 844, "-390")):
+        p.set_viewport_size({"width": width, "height": height})
+        p.wait_for_timeout(400)
+        if at:
+            p.locator(at).first.evaluate("(e) => e.scrollIntoView({ block: 'center' })")
+        r.shot(name + tail, full=full)
     p.set_viewport_size({"width": 1280, "height": 900})
     p.wait_for_timeout(300)
 
@@ -565,13 +568,28 @@ def guided(r: Run, dark: bool) -> None:
     text = ask.inner_text()
     assert text.startswith("Want ") and "? Or I can show " in text, text
     expect(p.locator("#ok-btn")).to_have_attribute("aria-describedby", "ask-q")
-    ask.scroll_into_view_if_needed()
-    p.evaluate("window.scrollBy(0, 160)")
-    both_widths(r, "v3-item3-choice-line" + sfx)
+    both_widths(r, "v3-item3-choice-line" + sfx, at="#ask-q")
     p.click("#opt-btn")
     p.locator("#sheet .alt button:not([disabled])").first.click()
     expect(ask).to_contain_text("Happy with ")
     expect(ask).to_contain_text("the other options again")
+
+    r.step("you are here: a marker on the active stop, the next undecided stop pulses, decided stops tick")
+    p.click("#ok-btn")
+    now = p.locator(".node.now")
+    expect(now.locator(".here")).to_have_text("You are here")
+    expect(now.locator(".nl")).to_have_text("Theme · 2 of 6")
+    expect(now).to_have_attribute("aria-label", re.compile(r"^You are here: Stop 2 of 6, Theme"))
+    expect(p.locator(".node.upnext")).to_have_count(1)
+    expect(p.locator(".node.upnext")).to_have_attribute("data-i", "2")
+    expect(p.locator(".node").first.locator(".nb")).to_have_text("✓")
+    both_widths(r, "v3-item4-you-are-here" + sfx, at=".scenewrap")
+    p.click("button.sg >> text=List")
+    expect(p.locator(".slist li.now .heretag")).to_have_text("You are here")
+    expect(p.locator(".slist li.upnext .heretag")).to_have_text("Up next")
+    expect(p.locator(".slist li").first.locator(".sltag")).to_contain_text("✓ Venue · 1 of 6 · Decided")
+    both_widths(r, "v3-item4-list" + sfx, at=".slist li.now")
+    p.click("button.sg >> text=Path")
 
 
 def run_axe(browser, axe_path: Path, shots: Path) -> list:

@@ -433,17 +433,19 @@ function pathView(m, idx, reach, draw) {
   const type = state.plan.profile.type;
   const endLabel = type === 'wedding' ? 'Wedding day' : type === 'birthday' ? 'Party day' : 'Event day';
   const pct = (x, y) => ({ left: (x / W) * 100 + '%', top: (y / H) * 100 + '%' });
+  const up = upNext(m, idx);
   const nodes = m.map((x, i) => {
     const off = i > reach;
-    const cls = (off ? 'later' : i === idx ? 'now' : x.decided ? 'done' : 'later') + (x.status === 'skip' ? ' skip' : '');
+    const cls = (off ? 'later' : i === idx ? 'now' : x.decided ? 'done' : 'later') + (x.status === 'skip' ? ' skip' : '') + (i === up ? ' upnext' : '');
     const status = x.status !== 'open' ? STATUS_WORD[x.status].toLowerCase()
       : x.decided ? 'decided' : off ? 'to be decided later' : i === idx ? 'in progress' : 'proposed';
     return h('button', { class: 'node ' + cls, type: 'button', style: pct(pts[i + 1][0], pts[i + 1][1]),
-      'aria-label': `Stop ${i + 1}, ${x.label}, ${status}${x.flag && !off ? ', updated' : ''}`,
+      'aria-label': `${i === idx ? 'You are here: ' : ''}Stop ${i + 1} of ${n}, ${x.label}, ${status}${i === up ? ', up next' : ''}${x.flag && !off ? ', updated' : ''}`,
       'aria-current': i === idx ? 'step' : null, 'aria-disabled': off ? 'true' : null, 'data-i': i,
       onClick: () => (off ? say('Decide the earlier stops first, or use "Plan the rest for me".') : openStop(i)) },
+    i === idx ? h('span', { class: 'here', 'aria-hidden': 'true' }, 'You are here') : null,
     h('span', { class: 'nb', 'aria-hidden': 'true' }, x.status === 'skip' && i !== idx ? '–' : x.decided && i !== idx ? '✓' : String(i + 1)),
-    h('span', { class: 'nl', 'aria-hidden': 'true' }, x.label),
+    h('span', { class: 'nl', 'aria-hidden': 'true' }, i === idx ? `${x.label} · ${i + 1} of ${n}` : x.label),
     x.flag && !off ? h('span', { class: 'nu', 'aria-hidden': 'true' }, 'Updated') : null);
   });
   const scroll = h('div', { class: 'scenescroll' },
@@ -456,9 +458,10 @@ function pathView(m, idx, reach, draw) {
         s('circle', { class: 'porig', cx: END[0], cy: END[1], r: 7 })),
       h('div', { class: 'endl', 'aria-hidden': 'true', style: pct(START[0], START[1] + 14) }, 'Today'),
       nodes,
-      h('div', { class: 'endl end', 'aria-hidden': 'true', style: pct(END[0], END[1] - 14) }, endLabel)));
+      h('div', { class: 'endl end', 'aria-hidden': 'true', style: pct(END[0], END[1] - 14) }, endLabel,
+        idx >= n ? h('span', { class: 'here' }, 'You are here') : null)));
   const wrap = h('div', { class: 'scenewrap dark', role: 'group',
-    'aria-label': `Your route from today to the ${endLabel.toLowerCase()}. The List view has the same stops as plain text.` },
+    'aria-label': `Your route from today to the ${endLabel.toLowerCase()}. ${idx >= n ? 'Every stop is decided.' : `You are at stop ${idx + 1} of ${n}, ${m[idx].label}.`} The List view has the same stops as plain text.` },
   scroll, h('div', { class: 'scrollcue', 'aria-hidden': 'true' }));
   requestAnimationFrame(() => {
     const over = scroll.scrollWidth > scroll.clientWidth + 2;
@@ -529,11 +532,13 @@ function mapView(m) {
 }
 
 function listView(m, idx, reach) {
+  const up = upNext(m, idx);
   return h('ol', { class: 'slist', 'aria-label': 'All stops' }, m.map((x, i) => {
     const off = i > reach;
-    return h('li', { class: i === idx ? 'now' : null },
+    return h('li', { class: i === idx ? 'now' : i === up ? 'upnext' : null, 'aria-current': i === idx ? 'step' : null },
       h('div', null,
-        h('span', { class: 'sltag' }, `${x.label} · ${x.status !== 'open' ? STATUS_WORD[x.status] : x.decided ? 'Decided' : off ? 'To be decided' : 'Proposed'}`), h('br'),
+        i === idx ? h('span', { class: 'heretag' }, 'You are here') : i === up ? h('span', { class: 'heretag soon' }, 'Up next') : null,
+        h('span', { class: 'sltag' }, `${x.decided ? '✓ ' : ''}${x.label} · ${i + 1} of ${m.length} · ${x.status !== 'open' ? STATUS_WORD[x.status] : x.decided ? 'Decided' : off ? 'To be decided' : 'Proposed'}`), h('br'),
         h('b', null, off ? 'Waiting on earlier stops' : x.status === 'skip' ? 'Not in the plan' : x.status !== 'open' ? (x.s.note || STATUS_WORD[x.status]) : x.item.name),
         off || x.status === 'skip' ? null : ' · ' + inr(x.price),
         x.flag && !off ? h('span', { class: 'tt2' }, ' · Updated: ' + x.flag.note) : null),
@@ -541,6 +546,12 @@ function listView(m, idx, reach) {
         onClick: () => { setJ({ view: 'path' }, { render: false }); openStop(i); } },
       off ? 'Locked' : x.decided ? 'Revisit' : 'Open', h('span', { class: 'sr' }, ' ' + x.label)));
   }));
+}
+
+/** The next stop still to decide after the one you are on (it pulses gently on the path). */
+function upNext(m, idx) {
+  const i = nextIndex(m, Object.fromEntries(m.map((x) => [x.key, x.decided])), Math.min(idx, m.length - 1));
+  return i < m.length && i !== idx ? i : -1;
 }
 
 function photoBlock(cur) {
