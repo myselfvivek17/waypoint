@@ -33,7 +33,7 @@ def clip(value: object, limit: int, default: str = "") -> str:
     return text or default
 
 
-_SENTENCE = re.compile(r"[^.!?]+[.!?]*")
+_SENTENCE = re.compile(r"(?:\d\.(?=\d)|[^.!?])+[.!?]*")  # "0.39 km" is not two sentences
 _MONEY = re.compile(r"₹|\brs\.?\s*\d|\binr\b|\d\s*(?:k|lakhs?|lacs?|crores?)\b|\brupees?\b", re.I)
 KIND_WORDS = re.compile(r"(?i)\b(caf[eé]|restaurant|banquet|hall|garden|park|hotel|resort|lawn|terrace|clubhouse|"
                         r"dhaba|rooftop)s?\b")

@@ -114,3 +114,17 @@ def test_drop_money_removes_sentences_with_amounts(text, expected):
 ])
 def test_drop_wrong_kind(text, label, expected):
     assert drop_wrong_kind(text, label) == expected
+
+
+def test_decimals_do_not_split_sentences():
+    assert v.sentences("Café, 0.39 km from Gachibowli. Fits 30 guests. About ₹1.5 lakh!") == [
+        "Café, 0.39 km from Gachibowli.", "Fits 30 guests.", "About ₹1.5 lakh!"]
+
+
+def test_venue_reason_has_no_broken_distance(aditya, venue_set):
+    from app import places, planner, rules, templates
+    r = rules.evaluate(aditya, dt.date(2026, 10, 20))
+    cands = templates.rank_venues(places.venue_candidates(venue_set, aditya.guests), aditya, r)
+    fb = templates.draft_plan(aditya, r, cands, places.bakery_candidates(venue_set))
+    rec = planner.assemble(fb, fb, aditya, r, venue_set, dt.date(2026, 10, 20), "fallback").stops[0].rec
+    assert rec.reason == "Restaurant, 0.12 km from Gachibowli. Fits 30 guests.", rec.reason
