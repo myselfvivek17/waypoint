@@ -193,6 +193,29 @@ body:has(.sheetwrap) #view [data-next]{animation:none}
 .loc .btn{display:inline-flex;align-items:center;gap:8px}
 .loc .tt2{margin:6px 0 0;max-width:52ch}
 .areanote{margin:2px 0 0}
+/* "Which Meerpet?" picker and the pin-on-map fallback */
+.apick{margin:4px 0 18px;padding:16px 18px;border-radius:18px;border:2px solid var(--mari);background:var(--paper);max-width:640px}
+.apickh{margin:0;font-family:'Fraunces',Georgia,serif;font-size:22px;font-weight:600}
+.apick>.tt2{margin:4px 0 0}
+.apicks{margin-top:12px;gap:10px}
+.apicks .way{padding:12px 16px}
+.apicks .way[aria-pressed="true"]{border-color:var(--ink);background:var(--sand)}
+.apicks .wd{color:var(--muted)}
+.apn{display:inline-grid;place-items:center;width:24px;height:24px;margin-right:10px;border-radius:999px;background:var(--ink);color:var(--cream);font-size:13px;font-weight:700;vertical-align:1px}
+.apick .linkb{display:inline-flex;align-items:center;gap:6px;margin-top:8px}
+.pinmap{margin-top:12px}
+.pmframe{position:relative;height:260px;overflow:hidden;border-radius:14px;border:1.5px solid var(--line);background:var(--map-bg);cursor:crosshair;touch-action:manipulation}
+.pmtile{position:absolute;width:256px;height:256px;max-width:none;user-select:none;pointer-events:none}
+:root[data-theme="dark"] .pmtile{filter:invert(1) hue-rotate(180deg) brightness(.9) contrast(.9)}
+.pmmark,.pmpin{position:absolute;pointer-events:none}
+.pmmark{width:26px;height:26px;margin:-13px 0 0 -13px;display:grid;place-items:center;border-radius:999px;background:var(--ink);color:var(--cream);font-size:13px;font-weight:700;border:2px solid var(--cream)}
+.pmpin{width:22px;height:22px;margin:-22px 0 0 -11px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:var(--mari);border:2px solid var(--night);box-shadow:0 2px 6px rgba(0,0,0,.3)}
+.pmattr{position:absolute;right:0;bottom:0;padding:2px 8px;font-size:12px;background:var(--paper);color:var(--ink);border-top-left-radius:8px}
+.pmattr a{color:var(--ink)}
+.pmact{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px}
+.pmact .btn{min-width:44px;padding:0 14px}
+.pmact .btn.pri{padding:0 22px}
+.pinmap>.tt2{margin:6px 0 0}
 .around{margin:0 0 10px;color:var(--muted)}
 .around b{color:var(--ink)}
 .howgot{margin-top:18px;border-top:1px solid var(--line);padding-top:12px}

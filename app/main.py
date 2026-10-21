@@ -37,8 +37,9 @@ log = logging.getLogger("waypoint")
 
 MAX_BODY = 64 * 1024
 # Photos load straight from Wikimedia and the Openverse thumbnail proxy (and Foursquare's image host
-# only when a Foursquare key is configured); everything else is same-origin.
-IMG_HOSTS = "https://upload.wikimedia.org https://api.openverse.org" + (
+# only when a Foursquare key is configured); "Pin on map" shows OpenStreetMap's standard tiles.
+# Everything else is same-origin.
+IMG_HOSTS = "https://upload.wikimedia.org https://api.openverse.org https://tile.openstreetmap.org" + (
     " https://fastly.4sqi.net" if os.getenv("FOURSQUARE_API_KEY", "").strip() else "")
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'; "
        f"img-src 'self' data: blob: {IMG_HOSTS}; connect-src 'self'; object-src 'none'; "
@@ -226,15 +227,19 @@ async def get_places(request: Request, area: str | None = Query(None, min_length
                      guests: int | None = Query(None, ge=1, le=5000),
                      lat: float | None = Query(None, ge=-90, le=90),
                      lon: float | None = Query(None, ge=-180, le=180)) -> dict:
-    """``?area=`` warms the venue cache (prefetch); ``?lat=&lon=`` lists nearby food, parking and stays."""
+    """``?area=`` warms the venue cache (prefetch), or lists the ``options`` when the area has
+    namesakes the user must choose between; ``?lat=&lon=`` lists nearby food, parking and stays."""
     limiter.check(request, "places")
     if lat is not None and lon is not None:
         rows = places.pick_nearby(await places.nearby(lat, lon))
         return {"places": [NearbyPlace(group=places.NEARBY_GROUP[p.kind], **p.model_dump(
             include={"id", "name", "label", "lat", "lon", "dist_km"})) for p in rows]}
     if area:
+        options = await places.geocode_options(area)
+        if len(options) > 1:  # do not guess: the browser asks "Which Meerpet?"
+            return {"center": None, "count": 0, "options": options}
         ps = await places.venues(area, guests)
-        return {"center": ps.center, "count": len(ps.places)}
+        return {"center": ps.center, "count": len(ps.places), "options": options}
     raise HTTPException(422, "Give an area, or a latitude and longitude.")
 
 

@@ -28,6 +28,7 @@ class Point(BaseModel):
     lat: float = Field(ge=-90, le=90)
     lon: float = Field(ge=-180, le=180)
     label: str | None = Field(None, max_length=160)  # what the geocoder calls it, for the user to confirm
+    detail: str | None = Field(None, max_length=160)  # "Balapur mandal, Ranga Reddy · 500097", to tell namesakes apart
 
 
 # Fields that never go to a model: the device position is used only for the place search.

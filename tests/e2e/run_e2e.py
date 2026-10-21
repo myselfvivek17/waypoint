@@ -790,6 +790,93 @@ def run_axe(browser, axe_path: Path, shots: Path) -> list:
     return results
 
 
+# "Meerpet, Hyderabad" has namesakes on OpenStreetMap; the browser gets the two areas the server
+# would offer (pinned here so the run does not depend on live geocoder results).
+MEERPET = [
+    {"lat": 17.4546432, "lon": 78.5715499, "label": "Meerpet H.B Colony, Hyderabad",
+     "detail": "Uppal mandal, Medchal–Malkajgiri · 500040"},
+    {"lat": 17.322338, "lon": 78.5319055, "label": "Meerpet Road, Jillelaguda",
+     "detail": "Balapur mandal, Ranga Reddy · 500097"},
+]
+# Map tiles are stubbed with a plain grid so the run makes no tile requests to OpenStreetMap.
+TILE_SVG = ('<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" '
+            'fill="#EFE3C8"/><path d="M0 128H256M128 0V256" stroke="#FFFBF2" stroke-width="10"/>'
+            '<path d="M0 0H256V256" fill="none" stroke="#D9CBAA"/></svg>')
+
+
+def area_picker(r: Run, dark: bool) -> None:
+    """Namesakes: "Which Meerpet?" in the chat, a pick, then pin on map from the details page."""
+    p = r.page
+    suffix = "-dark" if dark else ""
+    tiles: list[str] = []
+    p.route(lambda u: "/api/places?" in u and "area=Meerpet" in u, lambda route: route.fulfill(
+        json={"center": None, "count": 0, "options": MEERPET}))
+    p.route("https://tile.openstreetmap.org/**", lambda route: (tiles.append(route.request.url), route.fulfill(
+        body=TILE_SVG, content_type="image/svg+xml"))[-1])
+    p.route("**/api/whereami", lambda route: route.fulfill(json={"area": "Jillelaguda, Hyderabad"}))
+    p.goto(BASE + "/?reset=1")
+    if dark:
+        p.click("#theme")
+    r.step("area with namesakes → 'Which Meerpet?' picker in the chat")
+    p.fill("#w-in", "A birthday for 30 people, ₹40,000, in Meerpet, Hyderabad on 15 Nov")
+    p.click("#view button >> text=Begin")
+    expect(p.locator("#apick-h")).to_have_text("Which Meerpet?", timeout=40000)
+    expect(p.locator(".apicks .way")).to_have_count(2)
+    expect(p.locator(".apicks")).to_contain_text("Balapur mandal, Ranga Reddy · 500097")
+    expect(p.locator(".apicks")).to_contain_text("Uppal mandal, Medchal–Malkajgiri · 500040")
+    assert_no_null_text(p)
+    r.shot("v3b-picker-chat" + suffix, full=False)
+    p.click("#apick-1")
+    expect(p.locator(".apick")).to_have_count(0)
+    assert p.evaluate("import('/js/store.js').then((m) => m.state.profile.point.label)") == "Meerpet Road, Jillelaguda"
+    done = p.locator("#view >> text=That's everything I need.")
+    for _ in range(8):
+        expect(p.locator("#view button[disabled]")).to_have_count(0, timeout=40000)
+        if done.count():
+            break
+        p.locator(".chips .chip:not([disabled])").first.click()
+        p.wait_for_timeout(300)
+    expect(done).to_be_visible(timeout=40000)
+    where = p.locator(".dgroup[aria-label='Where']")
+    expect(where).to_contain_text("Searching around: Meerpet Road, Jillelaguda · Balapur mandal")
+
+    r.step("details: choose again, pin the exact spot on the map")
+    where.locator("#area-change").click()
+    expect(p.locator("#apick-h")).to_be_focused()
+    expect(p.locator("#apick-1")).to_have_attribute("aria-pressed", "true")
+    expect(p.locator("#toast")).to_be_hidden(timeout=8000)
+    p.locator(".apick").scroll_into_view_if_needed()
+    r.shot("v3b-picker-details" + suffix, full=False)
+    p.click("#apick-pin")
+    expect(p.locator("#pm-frame")).to_be_focused()
+    expect(p.locator(".pmmark")).to_have_count(2)
+    expect(p.locator("#pm-use")).to_be_disabled()
+    assert tiles and all(re.fullmatch(r"https://tile\.openstreetmap\.org/\d+/\d+/\d+\.png", t) for t in tiles)
+    assert len(set(tiles)) <= 30, f"{len(set(tiles))} tiles for one small map"
+    p.locator(".pinmap").scroll_into_view_if_needed()
+    expect(p.locator("#toast")).to_be_hidden(timeout=8000)
+    box = p.locator("#pm-frame").bounding_box()
+    p.mouse.click(box["x"] + box["width"] * 0.5 - 30, box["y"] + box["height"] * 0.5 + 40)
+    expect(p.locator(".pmpin")).to_have_count(1)
+    p.keyboard.press("ArrowRight")  # keyboard nudges the pin; focus stays on the map
+    expect(p.locator("#pm-frame")).to_be_focused()
+    expect(p.locator("#pm-use")).to_be_enabled()
+    p.locator(".pinmap").scroll_into_view_if_needed()
+    r.shot("v3b-pin-map" + suffix, full=False)
+    p.click("#pm-use")
+    expect(where).to_contain_text("Searching around: Pinned spot near Jillelaguda, Hyderabad")
+    pt = p.evaluate("import('/js/store.js').then((m) => m.state.profile.point)")
+    assert 17.3 < pt["lat"] < 17.5 and 78.5 < pt["lon"] < 78.6 and pt["lat"] == round(pt["lat"], 4), pt
+    assert_no_null_text(p)
+    if not dark:  # the plan itself is searched around the pin (one live run is enough)
+        r.step("plan → map view says where it searched")
+        p.click("#view button >> text=Start the journey")
+        expect(p.locator("#prop-h")).to_be_visible(timeout=150000)
+        p.click("button.sg >> text=Map")
+        expect(p.locator(".around")).to_contain_text("Searching around: Pinned spot near Jillelaguda, Hyderabad")
+    p.unroute_all()
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--live", action="store_true", help="use the real model from .env")
@@ -818,6 +905,8 @@ def main() -> int:
                         mobile(r, dark)
                         if not dark:
                             edges(r)
+                    if only in ("", "picker"):
+                        area_picker(r, dark)
                     if only in ("", "guided"):
                         guided(r, dark)  # last: it asks for tours, which then stay on for this session
                 except Exception as exc:  # report and keep going so the summary is complete

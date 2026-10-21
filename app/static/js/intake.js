@@ -4,6 +4,7 @@ import { daysBetween, h, inr, longDate, parseISO, shortDate } from './dom.js';
 import { budgetLine, summary } from './model.js';
 import { adoptPlan, discardDetailEdits, freshChat, freshJourney, state } from './store.js';
 import { pinIcon } from './art.js';
+import { pinMap, viewFor } from './pinmap.js';
 import { announce, go, guide, primary, rerender, say, stopThinking, think, todayIso, update } from './ui.js';
 
 const STARTERS = ['Birthday', 'Wedding', 'House-warming', 'Community event'];
@@ -65,15 +66,86 @@ export async function sendChat(message, asked, edit = false) {
   return true;
 }
 
-/** Warm the venue cache and learn what the map calls the area, so the user can confirm it. */
-function checkArea(p) {
+/** Warm the venue cache and learn what the map calls the area, so the user can confirm it.
+    When OpenStreetMap knows several places by that name, nothing is guessed: the options come
+    back and the user picks one ("Which Meerpet?"). ``open`` shows the picker even after a pick. */
+function checkArea(p, open = false) {
   if (p.point && p.from_me) { state.areaCheck = { area: p.area, label: p.area, mine: true }; return; }
   state.areaCheck = { area: p.area, label: undefined };
   api.prefetch(p.area, p.guests).then((r) => {
     if (state.profile.area !== p.area) return;
-    state.areaCheck = { area: p.area, label: r.ok ? (r.data.center ? r.data.center.label || p.area : null) : undefined };
-    if (state.route === 'chat') rerender({ focus: null });
+    const options = r.ok && Array.isArray(r.data.options) ? r.data.options : [];
+    state.areaCheck = { area: p.area, options, open,
+      label: r.ok ? (r.data.center ? r.data.center.label || p.area : options.length ? '' : null) : undefined };
+    if (options.length > 1 && !state.profile.point) {
+      announce(`I found ${options.length} places called ${placeName(p)}. Pick the one you mean.`);
+    }
+    if (state.route === 'chat') rerender({ focus: open ? 'apick-h' : null });
   });
+}
+
+const placeName = (p) => (p.area || '').split(',')[0].trim() || 'that';
+
+/** Several places share the name and none is chosen yet: the plan must not guess. */
+const needsPick = (p) => {
+  const c = state.areaCheck;
+  return !p.point && !!c && c.area === p.area && Array.isArray(c.options) && c.options.length > 1;
+};
+
+/** The chosen area (or pinned spot) becomes the point every search is centred on. */
+function useAreaPoint(point, msg) {
+  state.profile = Object.assign({}, state.profile, { point, from_me: false });
+  state.areaCheck = Object.assign({}, state.areaCheck, { open: false, pin: null });
+  const changed = !!state.plan && JSON.stringify(state.profile) !== JSON.stringify(state.plan.profile);
+  update({ planDirty: changed, err: '' }, { focus: state.chat.done ? 'area-change' : 'question' });
+  say(msg);
+  announce(msg);
+}
+
+function pickArea(o) {
+  useAreaPoint({ lat: o.lat, lon: o.lon, label: o.label || placeName(state.profile), detail: o.detail || null },
+    `Searching around ${o.label || placeName(state.profile)}.`);
+}
+
+function openPin() {
+  const c = state.areaCheck || {};
+  const pts = (c.options || []).length ? c.options : state.profile.point ? [state.profile.point] : [];
+  if (!pts.length) return;
+  state.areaCheck = Object.assign({}, c, { open: true, pin: viewFor(pts) });
+  rerender({ focus: 'pm-frame' });
+}
+
+/** A pinned spot is named by the reverse geocoder, which only sees it rounded to about 100 m. */
+async function usePin(pin) {
+  const r = await api.whereami(pin.lat, pin.lon);
+  const near = r.ok && r.data.area ? r.data.area : placeName(state.profile);
+  useAreaPoint({ lat: pin.lat, lon: pin.lon, label: `Pinned spot near ${near}`.slice(0, 160), detail: null },
+    `Searching around your pin near ${near}.`);
+}
+
+/** "Which Meerpet?": each namesake with its mandal, district and pincode, and a map fallback. */
+function areaPicker(p, c) {
+  const opts = c.options || [];
+  const cur = p.point && !p.from_me ? p.point : null;
+  const name = placeName(p);
+  return h('div', { class: 'apick', role: 'group', 'aria-labelledby': 'apick-h' },
+    h('p', { class: 'apickh', id: 'apick-h', tabindex: '-1' }, opts.length > 1 ? `Which ${name}?` : 'Where exactly?'),
+    h('p', { class: 'tt2' }, opts.length > 1
+      ? `OpenStreetMap knows ${opts.length} places called ${name}. Pick the one you mean, and I'll search around it.`
+      : 'Pick the area, or pin the exact spot on the map.'),
+    h('ul', { class: 'ways apicks' }, opts.map((o, i) => h('li', null,
+      h('button', { class: 'way', type: 'button', id: 'apick-' + i,
+        'aria-pressed': cur ? String(cur.lat === o.lat && cur.lon === o.lon) : null, onClick: () => pickArea(o) },
+      h('span', { class: 'wt' }, h('span', { class: 'apn', 'aria-hidden': 'true' }, String(i + 1)), o.label || name),
+      o.detail ? h('span', { class: 'wd' }, o.detail) : null)))),
+    c.pin ? pinMap(c.pin, { marks: opts,
+      onChange: (v) => { state.areaCheck = Object.assign({}, state.areaCheck, { pin: v }); rerender({ focus: null }); },
+      onUse: usePin,
+      onCancel: () => { state.areaCheck = Object.assign({}, state.areaCheck, { pin: null }); rerender({ focus: 'apick-pin' }); } })
+      : h('button', { class: 'linkb apin', type: 'button', id: 'apick-pin', onClick: openPin }, pinIcon(), 'None of these? Pin it on the map'),
+    cur ? h('button', { class: 'linkb', type: 'button', id: 'apick-keep',
+      onClick: () => { state.areaCheck = Object.assign({}, c, { open: false, pin: null }); rerender({ focus: 'area-change' }); } },
+    `Keep ${cur.label || name}`) : null);
 }
 
 const LOC_NOTE = 'Your position is used once, to name your area and search around it. It stays on this device; the server never stores it.';
@@ -105,15 +177,36 @@ function locateButton() {
     state.locMsg ? h('p', { class: 'chgmsg', role: 'status' }, state.locMsg) : null);
 }
 
-/** What the map made of the area the user typed: confirm it, or correct it. */
+/** The "Which Meerpet?" picker when it is wanted: namesakes not yet chosen, or opened again. */
+function pickerFor(p) {
+  const c = state.areaCheck;
+  if (p.from_me || !p.area || !c || c.area !== p.area || !c.options || !c.options.length) return null;
+  return needsPick(p) || c.open ? areaPicker(p, c) : null;
+}
+
+/** What the map made of the area the user typed: confirm it, pick between namesakes, or correct it. */
 function areaNote(p) {
   if (p.from_me) return h('p', { class: 'tt2 areanote' }, 'From your location. Searching around it, not your exact position.');
   const c = state.areaCheck;
-  if (!c || c.area !== p.area || c.label === undefined) return null;
+  const here = c && c.area === p.area;
+  if (pickerFor(p)) return null; // the picker itself is shown under the field
+  if (p.point) {
+    return h('p', { class: 'tt2 areanote' }, 'Searching around: ', h('b', null, p.point.label || p.area),
+      p.point.detail ? ` · ${p.point.detail}` : '', ' · ',
+      h('button', { class: 'linkb', type: 'button', id: 'area-change',
+        onClick: () => (here && c.options && c.options.length
+          ? (state.areaCheck = Object.assign({}, c, { open: true }), rerender({ focus: 'apick-h' })) : checkArea(p, true)) },
+      'Choose a different one'));
+  }
+  if (!here || c.label === undefined) return null;
   if (c.label === null) {
     return h('p', { class: 'err areanote', role: 'status' }, "I couldn't find this area on OpenStreetMap. Try a neighbourhood and city, like \"Gachibowli, Hyderabad\".");
   }
-  return h('p', { class: 'tt2 areanote' }, `Found on the map as: ${c.label}. Not right? Edit it.`);
+  return h('p', { class: 'tt2 areanote' }, `Found on the map as: ${c.label}. Not right? Edit it, or `,
+    h('button', { class: 'linkb', type: 'button', id: 'area-change', onClick: () => {
+      state.areaCheck = Object.assign({}, c, { open: true });
+      openPin();
+    } }, 'pin it on the map'), '.');
 }
 
 async function startChat(message) {
@@ -138,6 +231,10 @@ const PLAN_STEPS = (p) => {
 
 /** Rules, real places and one model call on the server; then the journey starts. */
 export async function buildPlan() {
+  if (needsPick(state.profile)) {
+    update({ err: `First pick which ${placeName(state.profile)} you mean, so I search around the right one.` }, { focus: 'apick-h' });
+    return;
+  }
   update({ busy: true, err: '' });
   think(PLAN_STEPS(state.profile), 'A first plan for a new area can take up to a minute.');
   const r = await api.plan(state.profile, !state.demo.offline);
@@ -394,6 +491,7 @@ function fieldRow(key, label, placeholder, p) {
 
 function detailsView() {
   const c = state.chat, p = state.profile, plan = state.plan;
+  if (p.area && !p.point && !state.areaCheck) checkArea(p); // after a reload: are there namesakes to pick from?
   const n = p.date ? daysBetween(todayIso(), p.date) : null;
   const ai = c.understoodSource === 'ai';
   const sum = plan && !state.planDirty ? summary(state) : null;
@@ -424,7 +522,7 @@ function detailsView() {
         GROUPS.map(([title, rows]) => h('section', { class: 'dgroup', 'aria-label': title },
           h('h2', { class: 'dgh' }, title),
           h('dl', null, rows.map(([key, label, ph]) => fieldRow(key, label, ph, p))),
-          title === 'Where' ? locateButton() : null)),
+          title === 'Where' ? [pickerFor(p), locateButton()] : null)),
         c.transcript.length ? h('details', { class: 'howgot' },
           h('summary', null, `How we got here: ${c.transcript.length} answer${c.transcript.length === 1 ? '' : 's'}`),
           c.transcript.map((t) => h('div', { class: 'tq' }, h('p', { class: 'tqq' }, t.q), h('p', { class: 'tqa' }, t.a)))) : null)));
@@ -436,11 +534,12 @@ export function chatView() {
   const body = c.block ? blockView(c.block) : c.done ? doneActions()
     : c.reply ? questionView(c)
       : h('p', { class: 'lead', id: 'q-h', tabindex: '-1' }, state.busy ? 'Reading that…' : state.err || 'Starting…');
+  const pick = pickerFor(state.profile);
   return h('main', { class: 'wrap chat', id: 'main' },
     h('div', { class: 'chatgrid' },
       h('section', { 'aria-labelledby': 'chat-h' },
         h('h1', { id: 'chat-h', class: 'sr', tabindex: '-1' }, 'Tell me about your event'),
         c.transcript.map((t) => h('div', { class: 'tq' }, h('p', { class: 'tqq' }, t.q), h('p', { class: 'tqa' }, t.a))),
-        body),
+        pick, body),
       eventCard()));
 }

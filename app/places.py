@@ -191,27 +191,104 @@ def short_label(addr: dict, display: str = "") -> str:
     return label[:160]
 
 
-async def geocode(area: str) -> Point | None:
-    """Turn "Gachibowli, Hyderabad" into a point with the geocoder's own name for it. Cached."""
-    key = area.strip().lower()
-    if not key:
+# Nominatim results that name an area people can meet in. Shops, clinics, buildings and other
+# amenities are dropped: "Meerpet, Hyderabad" must not resolve to a pet clinic that mentions it.
+AREA_CATEGORIES = {"place", "boundary", "highway"}
+AREA_LANDUSE = {"residential"}
+DISTINCT_KM = 2.0   # two hits closer than this are the same area
+REGION_KM = 60.0    # a name-only follow-up search must stay in the region of the first hit
+MAX_OPTIONS = 4
+# Districts and states share names with their main town ("Jaipur" the district holds Jaipur the
+# city): they are never a separate choice when a finer area of that name lies in the same region.
+COARSE = {"state", "state_district", "county", "district", "region"}
+
+
+def _is_area(row: dict) -> bool:
+    cat = row.get("category")
+    if cat is None:  # older responses without a category: trust the geocoder
+        return True
+    return cat in AREA_CATEGORIES or (cat == "landuse" and row.get("type") in AREA_LANDUSE)
+
+
+def _option(row: dict) -> Point | None:
+    """One Nominatim row -> a point labelled for a picker: "Meerpet Road, Jillelaguda" with
+    "Balapur mandal, Ranga Reddy · 500097" as its detail."""
+    try:
+        lat, lon = float(row["lat"]), float(row["lon"])
+    except (KeyError, TypeError, ValueError):
         return None
-    hit = geo_cache.get(key)
-    if hit is not None:
-        return hit or None
-    params = {"q": area, "format": "jsonv2", "limit": 1, "accept-language": "en", "addressdetails": 1}
+    addr = row.get("address") or {}
+    name = re.sub(r"^(?:Ward|Zone|Circle|Division)\s+\d+\s+", "", str(row.get("name") or "")).strip()
+    if not name:
+        label = short_label(addr, str(row.get("display_name", "")))
+    else:
+        road = row.get("category") == "highway"
+        near = next((addr[k] for k in (("suburb", "neighbourhood", "city", "town", "village") if road else
+                                       ("city", "town", "village", "county", "state_district")) if addr.get(k)), "")
+        label = name if not near or near.lower() in name.lower() else f"{name}, {near}"
+    where = next((addr[k] for k in ("county", "city_district", "town", "city") if addr.get(k)), "")
+    region = ", ".join(x for x in (where, addr.get("state_district", "")) if x and x not in label)
+    detail = " · ".join(x for x in (region, str(addr.get("postcode") or "")) if x)
+    return Point(lat=lat, lon=lon, label=label[:160] or None, detail=detail[:160] or None)
+
+
+async def _search(q: str) -> list[dict]:
+    params = {"q": q, "format": "jsonv2", "limit": 5, "accept-language": "en", "addressdetails": 1}
     if COUNTRIES:
         params["countrycodes"] = COUNTRIES
     rows = await _get_json(NOMINATIM, params=params, timeout=8.0)
-    point = None
-    if isinstance(rows, list) and rows:
-        try:
-            point = Point(lat=float(rows[0]["lat"]), lon=float(rows[0]["lon"]),
-                          label=short_label(rows[0].get("address") or {}, str(rows[0].get("display_name", ""))) or None)
-        except (KeyError, TypeError, ValueError):
-            point = None
-    geo_cache.put(key, point or False, ttl=None if point else 600)
-    return point
+    return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+
+
+def distinct_areas(rows: list[dict], near: Point | None = None) -> list[Point]:
+    """Area-like rows as points, one per place: hits within ``DISTINCT_KM`` of an earlier one are
+    the same area. With ``near``, only hits within ``REGION_KM`` of it are kept."""
+    hits = []
+    for row in rows:
+        pt = _option(row) if _is_area(row) else None
+        if pt is not None and not (near and distance_km(near.lat, near.lon, pt.lat, pt.lon) > REGION_KM):
+            hits.append((pt, row.get("addresstype") in COARSE))
+    out: list[Point] = []
+    for pt, coarse in hits:
+        if coarse and any(not c and distance_km(o.lat, o.lon, pt.lat, pt.lon) <= REGION_KM for o, c in hits):
+            continue
+        if all(distance_km(o.lat, o.lon, pt.lat, pt.lon) > DISTINCT_KM for o in out):
+            out.append(pt)
+    return out[:MAX_OPTIONS]
+
+
+async def geocode_options(area: str) -> list[Point]:
+    """Every distinct area the text could mean, the geocoder's best first. Cached.
+
+    OSM often has several places with one name ("Meerpet" is a ward in Uppal and a town near
+    Balapur). When "Name, City" finds one area padded out with shops or clinics that mention the
+    name, the geocoder was unsure: the name alone is searched too, and areas in the same region
+    are offered, so the user can pick instead of us guessing. When
+    nothing area-like is found, the top hit is still used (someone may type a venue's name).
+    """
+    key = area.strip().lower()
+    if not key:
+        return []
+    hit = geo_cache.get(("options", key))
+    if hit is not None:
+        return hit
+    rows = await _search(area)
+    found = distinct_areas(rows)
+    name = area.split(",")[0].strip()
+    anchor = found[0] if found else _option(rows[0]) if rows else None
+    unsure = any(not _is_area(r) for r in rows)
+    if len(found) < 2 and unsure and anchor and name and name.lower() != key:
+        found = distinct_areas(rows + await _search(name), near=anchor)
+    if not found and anchor:
+        found = [anchor]
+    geo_cache.put(("options", key), found, ttl=None if found else 600)
+    return found
+
+
+async def geocode(area: str) -> Point | None:
+    """The geocoder's best point for "Gachibowli, Hyderabad", with its own name for it."""
+    found = await geocode_options(area)
+    return found[0] if found else None
 
 
 async def reverse(lat: float, lon: float) -> str | None:

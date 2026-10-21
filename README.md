@@ -180,6 +180,25 @@ appears instead of a stand-in. Map data © OpenStreetMap contributors (ODbL).
   **around the event area or venue — not around you**. The map toggle is *Around the venue*, every
   distance reads "1.2 km from Gachibowli" (or from the venue), and a line above the map says
   "Searching around: Gachibowli, Hyderabad · change".
+- **Namesakes are never guessed.** OSM often has several areas with one name: "Meerpet, Hyderabad" is
+  both a ward in Uppal and a town near Balapur / Jillelaguda, ~15 km apart. Waypoint asks Nominatim for
+  5 hits with address details, drops shops, clinics, buildings and other amenities, and treats hits
+  under 2 km apart as one area. When the full query returns a single area alongside points of interest
+  that merely mention the name, it also searches the name alone and keeps areas within 60 km. A district
+  that shares its town's name ("Jaipur") is not offered as a separate choice. If more than one area
+  remains, the chat and the Details *Where* field show a calm **"Which Meerpet?"** picker with each
+  option's mandal, district and pincode ("Meerpet Road, Jillelaguda · Balapur mandal, Ranga Reddy ·
+  500097"). No venue search runs and the plan doesn't start until you pick one. The pick becomes the
+  event's search point, and "Searching around: …" shows its name.
+- **Pin on map** is the fallback in the picker (and behind "pin it on the map" for any area): a small
+  OpenStreetMap map where you tap the exact spot, or move the pin with the arrow keys. The pin is rounded
+  to about 10 m and named by a reverse lookup that only sees it rounded to about 100 m. The map uses
+  OSM's standard tiles from `tile.openstreetmap.org`, the only host added to the CSP for it. In line
+  with the [tile usage policy](https://operations.osmfoundation.org/policies/tiles/), tiles load only
+  after you open the map, about a dozen per view with normal browser caching. The tile images send a
+  Referer for this site (`strict-origin-when-cross-origin` on those images only, while the page stays
+  `no-referrer`), there is no prefetching or bulk download, and the map carries the "© OpenStreetMap
+  contributors" attribution.
 - **Use my location** is opt-in: the browser asks only when you tap it. The position is rounded to about
   100 m on the device, POSTed once to `/api/whereami` (so it never appears in a URL or access log) to get
   an area name, and then used only for the place search. The server doesn't cache, log or store it, and
@@ -194,7 +213,7 @@ appears instead of a stand-in. Map data © OpenStreetMap contributors (ODbL).
   re-validated; the model has no tools, can't name places that weren't fetched, and its "Ask to adjust"
   output is a list of operations that are checked one by one against the plan.
 - Strict CSP (`default-src 'self'`, no inline script or style, no `eval` — the e2e run proves it, images
-  only from self, `blob:`/`data:`, `upload.wikimedia.org`, `api.openverse.org` and — only when a
+  only from self, `blob:`/`data:`, `upload.wikimedia.org`, `api.openverse.org`, `tile.openstreetmap.org` (Pin on map) and — only when a
   Foursquare key is set — `fastly.4sqi.net`), `frame-ancestors 'none'`, nosniff, DENY framing,
   no-referrer, `Permissions-Policy` (camera, microphone, payment off; geolocation for this site only),
   COOP/CORP.
@@ -239,7 +258,7 @@ appears instead of a stand-in. Map data © OpenStreetMap contributors (ODbL).
 
 ## Testing
 
-`pytest` — **394 tests**, fully offline (mock model, `respx` for HTTP):
+`pytest` — **403 tests**, fully offline (mock model, `respx` for HTTP):
 
 | File | What it covers |
 |---|---|
@@ -253,6 +272,7 @@ appears instead of a stand-in. Map data © OpenStreetMap contributors (ODbL).
 | `test_places.py` (31) | Invented place ids rejected, empty Overpass, Openverse parsing and caching, place-first photo order, Foursquare skip and matching |
 | `test_guidance.py` (24) | The choice line: the model's question kept only when safe (one question, an "or", no amounts or numbers, only real alternatives), the rules' fallback for every stop and alternative |
 | `test_location.py` (9) | India-only geocoding, reverse lookup rounded and uncached, POST-only, position never sent to the model |
+| `test_area_picker.py` (9) | *Which Meerpet?*: mocked Nominatim with the real Meerpet hits gives two options (mandal, district, pincode) and no venue search; a single clear area gives no picker and no second lookup; clinics and buildings filtered out; a district isn't a second choice beside its city; far namesakes ignored; the pick is the search centre; CSP allows OSM tiles only |
 | `test_invites.py` (8) | Three tones × three languages, localised dates, bad model text replaced, wrong script rejected |
 
 `tests/e2e/run_e2e.py` — a headless Playwright run (not part of pytest, so Playwright is not a dependency):
@@ -263,12 +283,12 @@ rest*, changes moments on the event day, books a task, adjusts, designs the invi
 Hindi must fit; the download must be a real PNG; the photo upload must make no network request), checks
 **the totals match across screens** at every step, then every screen at phone width; the whole flow again
 in dark mode; edge states, *I don't want cake* end to end, *Use my location* with a granted browser
-position, reduced motion; then the **guidance** in both themes: exactly one primary action named by the
+position, reduced motion; the **"Which Meerpet?" picker** in the chat and on Details, then *Pin on map* (tap and arrow keys, tiles stubbed so the run makes no tile requests), with the journey's "Searching around" naming the pin; then the **guidance** in both themes: exactly one primary action named by the
 guide line on every screen, the tour on the first visit and not the second, *?* replaying it, the choice
 line, *You are here*, the hint after waiting, *Plan the rest*, every **More** action (skip, already have,
 write my own, remove) with keyboard checks, and empty states; asserts no page or console errors;
-optionally runs axe-core. Mock model by default or the real one (`--live`). `WP_E2E_ONLY=guided` runs
-just the guidance part.
+optionally runs axe-core. Mock model by default or the real one (`--live`). `WP_E2E_ONLY=guided` (or `picker`)
+runs just that part.
 
 ## Assumptions and limits
 
