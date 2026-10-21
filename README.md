@@ -27,9 +27,11 @@ the budget always adds up, and at the end it designs the invitation card.
 5. **One AI call drafts the whole plan** inside those rules: a pick plus 2–3 alternatives (cheaper /
    closer / different vibe) per stop, ranked from **real places fetched around that area**, a run-sheet
    and an invite. Code then validates and repairs everything.
-6. **The journey** — one stop active at a time. *Looks good*, *Show options*, *Change*, *Why?* (the AI's
-   reason **and** the deterministic rule), *Plan the rest for me*, plus the choice controls below. Path,
-   Map (with **Around the venue**: food, parking and stays within 1.5 km) and List views.
+6. **The journey** — one stop active at a time, ending with its choice in plain words ("Want this café?
+   Or I can show cheaper ones."). *Looks good* and *Show options* are the two answers; *More ▾* holds the
+   choice controls below; *Why?* shows the AI's reason **and** the deterministic rule; *In a hurry? Plan
+   the rest for me* sits by the path. Path, Map (with **Around the venue**: food, parking and stays within
+   1.5 km) and List views.
 7. **Event day** — a second timeline for the day itself (three functions for weddings). Every moment can
    be kept, skipped, marked as sorted, swapped for an alternative, or rewritten.
 8. **My plan** — the next task, a checklist with *book by* dates, budget planned vs booked, **Ask to
@@ -42,10 +44,41 @@ While the AI works, a calm full-screen overlay shows the journey motif drawing i
 saying what is happening ("Finding cafés and restaurants around Gachibowli…", "Re-planning without a
 cake…"). State lives in the browser (localStorage) and is restored on reload. The server stores nothing.
 
+## Guided by design
+
+A first-time user (or a judge) should never wonder what to click next:
+
+- **One next step per screen.** Exactly one primary action is marigold and glows softly (a still ring
+  under reduced motion); everything else is secondary. A line under each title names it, built from the
+  state so it is always true: *"Stop 2 of 6: pick a theme. Tap Looks good, or Show options to compare."*,
+  *"Next up: Book the venue (book by 25 Oct). Tap Mark as booked once it is done."*
+- **A three-step tour** on the first visit to the Journey (the path, the stop's buttons, the budget bar),
+  and short ones on My plan and Invite: small popovers placed beside their target, never on it, with
+  Next / Back / Skip, arrow keys, Esc and a focus trap. Shown once per screen; the header's **?** replays
+  it (elsewhere it points at the screen's next step). Not shown under `?demo=` or in automated browsers
+  unless `?tour=1` asks for it.
+- **The choice in plain words.** The model writes a short question with each pick; code keeps it only if
+  it is one question with an "or", quotes no amounts or numbers, and offers only alternatives the stop
+  really has. Otherwise a rules line is used (*"Want this restaurant? Or I can show cheaper ones."*;
+  for a chosen alternative, *"Happy with this cake? Or I can show you the other options again."*).
+- **You are here.** The active stop carries a *You are here* marker and *Food · 3 of 6*; the next
+  undecided stop pulses gently; decided stops show a tick. List view and the screen-reader labels say
+  the same.
+- **A gentle hint after hesitation.** After about 8 s with no click or key press on a stop, *"Not sure?
+  Tap Looks good. You can change it later."* appears under its buttons — in the page flow, so it never
+  covers anything. Once per stop, dismissible, announced politely.
+- **In a hurry? Plan the rest for me** sits right above the path from the first stop, saying how many
+  stops it will confirm and that everything stays editable.
+- **Fewer buttons at once.** A stop shows *Looks good* and *Show options*; *Skip*, *I already have this*,
+  *Write my own*, *Describe a change* and *Remove stop* are in a **More ▾** menu (a real menu button:
+  arrow keys, Home/End, Esc returns focus). Event-day moments work the same way. Nothing was removed.
+- **Empty states** say what to do first: a route with no stops offers *Add a stop*, an empty run-sheet
+  or task list says how to fill it.
+
 ## The choice model
 
-Every stop has **Keep (Looks good) / Show options / Change** and **Skip / I already have this / Write my
-own / Remove stop**:
+Every stop has **Looks good / Show options** and, under **More ▾**, **Skip / I already have this / Write
+my own / Describe a change / Remove stop** (removing asks once):
 
 | Choice | What happens |
 |---|---|
@@ -186,8 +219,12 @@ appears instead of a stand-in. Map data © OpenStreetMap contributors (ODbL).
   invitation canvas has a text alternative with the full card text.
 - Light and dark themes (follows `prefers-color-scheme`, header toggle persisted, set before first paint),
   both WCAG AA — `tests/test_contrast.py` checks every text/background pair of both themes at ≥ 4.5:1.
-- **axe-core: 0 violations** on welcome, details, journey, options sheet, event day, plan and invite, in
-  both themes (run by the e2e script). Phones (390 px: no sideways scrolling on any screen) to laptops.
+- Guidance is accessible too: the tour is a labelled dialog with a focus trap, Esc and focus return; the
+  More menus are `aria-haspopup="menu"` buttons with arrow-key menus; the hesitation hint is a polite live
+  region that is always present; *You are here* and *Up next* are in the node labels and List view.
+- **axe-core: 0 violations** on welcome, details, journey, options sheet, event day, plan and invite, and
+  with the tour and both More menus open, in both themes (run by the e2e script). Phones (390 px: no
+  sideways scrolling on any screen) to laptops.
 
 ## Efficiency
 
@@ -202,7 +239,7 @@ appears instead of a stand-in. Map data © OpenStreetMap contributors (ODbL).
 
 ## Testing
 
-`pytest` — **370 tests**, fully offline (mock model, `respx` for HTTP):
+`pytest` — **394 tests**, fully offline (mock model, `respx` for HTTP):
 
 | File | What it covers |
 |---|---|
@@ -214,6 +251,7 @@ appears instead of a stand-in. Map data © OpenStreetMap contributors (ODbL).
 | `test_intake.py` (35) | Parsing, one question at a time, blocks, *What I understood*, first insights |
 | `test_api.py` (33) | chat → plan → adjust, 409 blocks, 413, 422, 429, security headers, `.ics`, rules-parser fallback |
 | `test_places.py` (31) | Invented place ids rejected, empty Overpass, Openverse parsing and caching, place-first photo order, Foursquare skip and matching |
+| `test_guidance.py` (24) | The choice line: the model's question kept only when safe (one question, an "or", no amounts or numbers, only real alternatives), the rules' fallback for every stop and alternative |
 | `test_location.py` (9) | India-only geocoding, reverse lookup rounded and uncached, POST-only, position never sent to the model |
 | `test_invites.py` (8) | Three tones × three languages, localised dates, bad model text replaced, wrong script rejected |
 
@@ -225,8 +263,12 @@ rest*, changes moments on the event day, books a task, adjusts, designs the invi
 Hindi must fit; the download must be a real PNG; the photo upload must make no network request), checks
 **the totals match across screens** at every step, then every screen at phone width; the whole flow again
 in dark mode; edge states, *I don't want cake* end to end, *Use my location* with a granted browser
-position, reduced motion; asserts no page or console errors; optionally runs axe-core. Mock model by
-default or the real one (`--live`).
+position, reduced motion; then the **guidance** in both themes: exactly one primary action named by the
+guide line on every screen, the tour on the first visit and not the second, *?* replaying it, the choice
+line, *You are here*, the hint after waiting, *Plan the rest*, every **More** action (skip, already have,
+write my own, remove) with keyboard checks, and empty states; asserts no page or console errors;
+optionally runs axe-core. Mock model by default or the real one (`--live`). `WP_E2E_ONLY=guided` runs
+just the guidance part.
 
 ## Assumptions and limits
 

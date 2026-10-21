@@ -469,6 +469,8 @@ def edges(r: Run) -> None:
     rm = p.context.browser.new_context(reduced_motion="reduce", viewport={"width": 1280, "height": 900})
     q = rm.new_page()
     q.goto(BASE + "/?reset=1")
+    ring = q.evaluate("(() => { const s = getComputedStyle(document.querySelector('[data-next]')); return [s.animationName, s.boxShadow]; })()")
+    assert ring[0] == "none" and ring[1] != "none", f"reduced motion: the next step should be a still ring, got {ring}"
     q.evaluate("import('/js/ui.js').then((m) => m.think('Testing the overlay…'))")
     q.wait_for_selector("#busy:not([hidden])")
     offset = q.evaluate("getComputedStyle(document.querySelector('.bm-path')).strokeDashoffset")
@@ -552,6 +554,10 @@ def guided(r: Run, dark: bool) -> None:
     expect(tour).to_have_count(0)
     expect(p.locator("#help")).to_be_focused()
 
+    r.step("one clear next step: the guide line names the single glowing primary action")
+    assert one_next_step(p, "journey") == "Looks good"
+    both_widths(r, "v3-item1-next-step-journey" + sfx, at="#guide")
+
     r.step("tour: a short one on My plan and Invite, and ? points at the next step elsewhere")
     p.click("nav >> text=My plan")
     expect(tour).to_be_visible(timeout=5000)
@@ -559,6 +565,8 @@ def guided(r: Run, dark: bool) -> None:
     tour_clear_of_target(p, "plan tour")
     both_widths(r, "v3-item2-tour-plan" + sfx)
     p.keyboard.press("Escape")
+    one_next_step(p, "my plan")
+    both_widths(r, "v3-item1-next-step-plan" + sfx, at="#guide")
     p.click("nav >> text=Invite")
     expect(tour).to_be_visible(timeout=8000)
     p.keyboard.press("Escape")
