@@ -97,6 +97,7 @@ h1:focus-visible,h2:focus-visible{outline:3px solid var(--focus);outline-offset:
 .way[data-next]{border-color:var(--mari)}
 body:has(.sheetwrap) #view [data-next]{animation:none}
 .guide{display:flex;gap:10px;align-items:baseline;margin:0 0 18px;font-weight:600;max-width:70ch}
+.empty{margin:8px 0 18px;padding:14px 18px;border:1.5px dashed var(--dash);border-radius:16px;color:var(--muted);max-width:62ch}
 .guide::before{content:"";flex:none;width:10px;height:10px;border-radius:50%;background:var(--mari);box-shadow:0 0 0 3px rgba(232,163,23,.3)}
 
 /* ---------- motion ---------- */

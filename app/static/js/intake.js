@@ -269,7 +269,7 @@ function eventCard() {
         : c.fixed ? h('span', { class: 'estat' }, c.text)
           : h('button', { class: 'echip', type: 'button', 'aria-label': `Change ${c.label}: ${c.text}`,
             onClick: () => update({ editing: c.key, editDraft: c.raw }, { focus: 'ed-in' }) }, c.text))))
-      : h('p', { class: 'evempty' }, 'Nothing yet. Your answers will appear here.'));
+      : h('p', { class: 'evempty' }, 'Nothing yet. Answer the question and your details appear here.'));
 }
 
 function blockView(b) {
@@ -385,7 +385,7 @@ function fieldRow(key, label, placeholder, p) {
   return h('div', { class: 'drow' },
     h('dt', null, label),
     h('dd', null,
-      h('div', { class: 'dval' }, val || h('span', { class: 'tt2' }, key === 'have' ? 'Nothing yet: tell me what is already sorted.' : 'Not set'),
+      h('div', { class: 'dval' }, val || h('span', { class: 'tt2' }, key === 'have' ? 'Nothing yet: tell me what is already sorted.' : 'Not set yet: tap Add.'),
         key === 'area' && p.area ? areaNote(p) : null),
       h('button', { class: 'linkb', id: 'ed-' + key, type: 'button',
         onClick: () => update({ editing: key, editDraft: rawValue(key, p) }, { focus: key === 'type' ? null : 'ed-in' }) },

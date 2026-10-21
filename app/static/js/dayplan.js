@@ -5,7 +5,7 @@ import { h, inr, longDate } from './dom.js';
 import { budgetLine, stopsModel, summary, taskRows } from './model.js';
 import { moreMenu } from './menu.js';
 import { applyAdjustment, pickItemAlt, setItemStatus, state, toggleTick } from './store.js';
-import { announce, go, guide, primary, say, stopThinking, think, todayIso, update } from './ui.js';
+import { announce, empty, go, guide, primary, say, stopThinking, think, todayIso, update } from './ui.js';
 
 /** Suggested requests, chosen from what this plan actually has. */
 function adjustChips(plan) {
@@ -77,6 +77,7 @@ export function dayView(opts = {}) {
     days.length > 1 ? h('div', { class: 'tabs', role: 'group', 'aria-label': 'Which function' },
       days.map((d, i) => h('button', { class: 'tab', type: 'button', 'aria-pressed': String(i === di),
         onClick: () => update({ dayTab: i }, { focus: 'h1' }) }, d.label))) : null,
+    !day.items.length ? empty('Nothing is on this run-sheet yet. On My plan, ask for a moment, like "cake at 8 pm", and it appears here.') : null,
     h('ol', { class: 'tl' + (opts.routeChanged ? ' anim' : '') }, day.items.map((it, i) => h('li', { class: 'tli' + (it.status === 'skip' ? ' skip' : ''), style: { animationDelay: i * 160 + 'ms' } },
       h('div', { class: 'tart' }, dayIcon(it.art)),
       h('div', { class: 'tbody' }, h('p', { class: 'ttime' }, it.time),
@@ -210,7 +211,8 @@ export function planView() {
   const doneWord = next && next.price ? 'Mark as booked' : 'Mark as done';
   const guideText = step === 'diff' ? 'Check the before and after, then tap Apply changes, or Keep as it is.'
     : step === 'task' ? `${late ? `${late} task${late > 1 ? 's are' : ' is'} late. ` : ''}Next up: ${next.text}${next.due ? ` (${next.dueText[0].toLowerCase() + next.dueText.slice(1)})` : ''}. Tap ${doneWord} once it is done.`
-      : 'Everything is booked. Tap Design the invitation card next.';
+      : rows.length ? 'Everything is booked. Tap Design the invitation card next.'
+        : 'Nothing to book yet. Add stops on the Journey, or tap Design the invitation card.';
   return h('main', { class: 'wrap plan', id: 'main' },
     h('p', { class: 'step' }, 'My plan'),
     h('h1', { class: 'disp h1', tabindex: '-1' }, plan.title),
@@ -224,8 +226,10 @@ export function planView() {
           h('h2', { class: 'disp' }, next.text),
           h('p', null, [next.dueText, next.status, next.costText].filter(Boolean).join(' · ')),
           step === 'task' ? primary({ onClick: () => tick(next.id) }, doneWord) : h('button', { class: 'btn', type: 'button', onClick: () => tick(next.id) }, doneWord))
-          : h('div', { class: 'next dark' }, h('h2', { class: 'disp' }, 'Everything is booked.'), h('p', null, 'Enjoy the day.')),
+          : rows.length ? h('div', { class: 'next dark' }, h('h2', { class: 'disp' }, 'Everything is booked.'), h('p', null, 'Enjoy the day.'))
+            : h('div', { class: 'next dark' }, h('h2', { class: 'disp' }, 'Nothing to book yet.'), h('p', null, 'Add a stop on the Journey and its task appears here.')),
         h('h2', { class: 'disp h2', id: 'tasks-h' }, 'All tasks'),
+        !rows.length ? empty('No tasks yet. Decide a stop on the Journey and its booking task, with a book-by date, appears here.') : null,
         h('ul', { class: 'tasks' }, rows.map((t) => h('li', { class: 'task' + (t.mandatory ? ' must' : '') },
           h('input', { type: 'checkbox', id: 'tk-' + t.id, checked: t.ticked, onChange: () => tick(t.id),
             'aria-describedby': 'tkd-' + t.id }),
@@ -236,6 +240,7 @@ export function planView() {
         h('h2', { class: 'disp h2', id: 'bud-h', style: { marginTop: '0' } }, 'Budget'),
         h('p', { style: { margin: '0 0 8px' } }, h('span', { 'data-budget-line': '' }, budgetLine(b)),
           b.over ? h('span', { class: 'over' }, ` · ${inr(b.total - b.budget)} over`) : null),
+        !m.length ? empty('No stops in the budget yet. Add one on the Journey to see where the money goes.') : null,
         h('div', null, m.map((x) => h('div', { class: 'brow', 'data-stop': x.key, 'data-price': x.price },
           h('button', { class: 'linkb', type: 'button', onClick: () => { update({ j: Object.assign({}, state.j, { stopIdx: x.i, view: 'path' }) }, { render: false }); go('journey', { focus: 'stop' }); } },
             x.label, h('span', { class: 'sr' }, ': open this stop')),

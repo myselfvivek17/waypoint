@@ -107,6 +107,11 @@ export function guide(text) {
   return h('p', { class: 'guide', id: 'guide' }, text);
 }
 
+/** A screen (or part of one) with nothing in it yet: one line saying what to do first. */
+export function empty(text, id = null) {
+  return h('p', { class: 'empty', id }, text);
+}
+
 /** Today's date as the server sees it (pinned for demos), falling back to the device. */
 export function todayIso() {
   if (state.serverToday) return state.serverToday;

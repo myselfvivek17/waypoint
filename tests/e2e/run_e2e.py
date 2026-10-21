@@ -704,6 +704,33 @@ def guided(r: Run, dark: bool) -> None:
     expect(p.locator(".tli.skip")).to_have_count(1)
     expect(first.locator("button", has_text="Keep it as planned")).to_be_focused()
 
+    if not dark:
+        empties(r)
+
+
+def empties(r: Run) -> None:
+    """Screens with nothing in them say what to do first (state emptied in the page, then re-drawn)."""
+    p = r.page
+    r.step("empty states: an empty run-sheet, no tasks, no stops")
+    redraw = "import('/js/ui.js').then((u) => u.rerender({ focus: null }))"
+    p.evaluate("import('/js/store.js').then((m) => { m.state.plan.days = m.state.plan.days.map((d) => ({ ...d, items: [] })); })")
+    p.evaluate(redraw)
+    expect(p.locator("#view .empty")).to_contain_text("Nothing is on this run-sheet yet")
+    one_next_step(p, "empty run-sheet")
+    r.shot("v3-empty-day", full=False)
+    p.evaluate("import('/js/store.js').then((m) => { m.state.plan.stops = []; m.state.plan.tasks = []; })")
+    p.click("nav >> text=My plan")
+    expect(p.locator("#view .empty").first).to_contain_text("No tasks yet")
+    expect(p.locator(".next")).to_contain_text("Nothing to book yet")
+    one_next_step(p, "empty plan")
+    r.shot("v3-empty-plan", full=False)
+    p.click("nav >> text=Journey")
+    expect(p.locator("#view .empty")).to_contain_text("Nothing is on your route")
+    assert one_next_step(p, "empty journey") == "Add a stop"
+    r.shot("v3-empty-journey", full=False)
+    p.click("#view .fin button >> text=Add a stop")
+    expect(p.locator("#add-in")).to_be_focused()
+
 
 def run_axe(browser, axe_path: Path, shots: Path) -> list:
     """axe-core on each screen; the CSP is bypassed only to inject the checker."""

@@ -8,7 +8,7 @@ import { allOptions, budgetLine, lineTotal, maxReach, nextIndex, stopsModel, sum
 import { applyAdjustment, chooseOption, confirmStop, setStopStatus, state } from './store.js';
 import { moreMenu } from './menu.js';
 import { tourOpen } from './tour.js';
-import { announce, go, guide, later, primary, rerender, say, stopThinking, think, update } from './ui.js';
+import { announce, empty, go, guide, later, primary, rerender, say, stopThinking, think, update } from './ui.js';
 
 const PHOTO_HOSTS = ['upload.wikimedia.org', 'api.openverse.org', 'fastly.4sqi.net'];
 const PAGE_HOSTS = ['commons.wikimedia.org', 'openverse.org', 'foursquare.com'];
@@ -530,7 +530,7 @@ function pathView(m, idx, reach, draw) {
       h('div', { class: 'endl', 'aria-hidden': 'true', style: pct(START[0], START[1] + 14) }, 'Today'),
       nodes,
       h('div', { class: 'endl end', 'aria-hidden': 'true', style: pct(END[0], END[1] - 14) }, endLabel,
-        idx >= n ? h('span', { class: 'here' }, 'You are here') : null)));
+        n && idx >= n ? h('span', { class: 'here' }, 'You are here') : null)));
   const wrap = h('div', { class: 'scenewrap dark', role: 'group',
     'aria-label': `Your route from today to the ${endLabel.toLowerCase()}. ${idx >= n ? 'Every stop is decided.' : `You are at stop ${idx + 1} of ${n}, ${m[idx].label}.`} The List view has the same stops as plain text.` },
   scroll, h('div', { class: 'scrollcue', 'aria-hidden': 'true' }));
@@ -817,7 +817,7 @@ const VERB = { venue: 'choose a', theme: 'pick a', cake: 'choose a', music: 'cho
 function guideText(m, idx) {
   const n = m.length;
   if (state.planning) return 'Planning the rest for you: I am confirming my suggestion for each remaining stop.';
-  if (!n) return 'Your route has no stops yet. Tap + Add a stop to begin.';
+  if (!n) return 'Your route has no stops yet. Tap Add a stop to put the first one on it.';
   if (idx >= n) return 'Every stop is decided. Tap See the event day next.';
   const cur = m[idx], label = cur.label.toLowerCase(), at = `Stop ${idx + 1} of ${n}`;
   if (cur.status !== 'open') {
@@ -857,6 +857,10 @@ export function journeyView(opts) {
     addPanel(),
     undecided || state.planning ? hurry(m) : null,
     j.view === 'map' ? mapView(m) : j.view === 'list' ? listView(m, idx, reach) : pathView(m, idx, reach, !!(opts && opts.routeChanged)),
-    idx >= n ? finale() : proposal(m, idx),
+    !n ? h('section', { class: 'fin', 'aria-labelledby': 'fin-h' },
+      h('h2', { id: 'fin-h', class: 'disp h2', tabindex: '-1' }, 'No stops yet'),
+      empty('Nothing is on your route. Add a stop, like the venue or a photographer, and I will suggest one.'),
+      primary({ onClick: () => update({ addOpen: true }, { focus: 'add-in' }) }, 'Add a stop'))
+      : idx >= n ? finale() : proposal(m, idx),
     plan.notes && plan.notes.length ? h('ul', { class: 'notes', 'aria-label': 'Notes about this plan' }, plan.notes.map((t) => h('li', null, t))) : null);
 }
