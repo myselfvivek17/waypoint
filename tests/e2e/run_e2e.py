@@ -291,7 +291,7 @@ def flow(r: Run, dark: bool) -> None:
     btn.click()
     expect(p.locator("#fin-h")).to_be_visible(timeout=30000)
     assert one_next_step(p, "finale") == "See the event day"
-    expect(btn).to_be_disabled()
+    expect(btn).to_have_count(0)  # nothing left to plan
     r.shot("journey-done" + suffix)
 
     r.step("event day: every moment can be skipped, covered, swapped or rewritten")
@@ -610,6 +610,23 @@ def guided(r: Run, dark: bool) -> None:
     expect(p.locator("#ok-btn")).to_be_focused()
     p.wait_for_timeout(9000)
     expect(hint).to_be_empty()  # once per stop
+
+    r.step("in a hurry: visible early, right above the path, says everything stays editable")
+    p.evaluate("window.scrollTo(0, 0)")
+    hurry = p.locator(".hurry")
+    expect(hurry).to_contain_text("In a hurry?")
+    expect(hurry).to_contain_text("Everything stays editable.")
+    box, scene = hurry.bounding_box(), p.locator(".scenewrap").bounding_box()
+    assert box["y"] + box["height"] < 900, "the hurry button should be in the first screenful"
+    assert 0 <= scene["y"] - (box["y"] + box["height"]) < 40, "it should sit right above the path"
+    both_widths(r, "v3-item6-hurry" + sfx, at=".hurry")
+
+    r.step("plan the rest: every stop decided, and each can still be reopened")
+    p.click("#rest-btn")
+    expect(p.locator("#fin-h")).to_be_visible(timeout=30000)
+    expect(p.locator(".hurry")).to_have_count(0)
+    p.locator(".node").nth(2).click()
+    expect(p.locator("#ok-btn")).to_have_text("Keep and continue")
 
 
 def run_axe(browser, axe_path: Path, shots: Path) -> list:

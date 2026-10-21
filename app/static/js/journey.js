@@ -784,6 +784,17 @@ export function sheetView() {
       h('ul', { class: 'alts' }, alts)));
 }
 
+/** "In a hurry?" sits right by the path from the first stop, so nobody has to hunt for it. */
+function hurry(m) {
+  const left = m.filter((x) => !x.decided).length;
+  return h('div', { class: 'hurry', role: 'group', 'aria-labelledby': 'hurry-h' },
+    h('p', { id: 'hurry-h' }, h('b', null, 'In a hurry? '),
+      state.planning ? 'Confirming my suggestions one stop at a time…'
+        : `I'll confirm my suggestion for the ${left === 1 ? 'last stop' : `${left} stops left`}. Everything stays editable.`),
+    h('button', { class: 'btn', id: 'rest-btn', type: 'button', disabled: state.planning, onClick: planRest },
+      state.planning ? 'Planning the rest…' : 'Plan the rest for me'));
+}
+
 const VERB = { venue: 'choose a', theme: 'pick a', cake: 'choose a', music: 'choose the', invites: 'choose the', day: 'check the' };
 
 /** "Stop 2 of 6: pick a theme. Tap Looks good, or Show options to compare." */
@@ -825,10 +836,10 @@ export function journeyView(opts) {
           v[0].toUpperCase() + v.slice(1)))),
       h('button', { class: 'tgl', type: 'button', role: 'switch', 'aria-checked': String(!!j.nearby),
         onClick: () => setJ({ nearby: !j.nearby, view: !j.nearby ? 'map' : j.view, pin: null }) }, h('span', { class: 'knob', 'aria-hidden': 'true' }), 'Around the venue'),
-      h('button', { class: 'btn', type: 'button', disabled: state.planning || !undecided, onClick: planRest }, 'Plan the rest for me'),
       h('button', { class: 'btn', id: 'add-btn', type: 'button', 'aria-expanded': String(!!state.addOpen), 'aria-controls': 'addp',
         disabled: m.length >= 10, onClick: () => update({ addOpen: !state.addOpen }, { focus: state.addOpen ? null : 'add-in' }) }, '+ Add a stop')),
     addPanel(),
+    undecided || state.planning ? hurry(m) : null,
     j.view === 'map' ? mapView(m) : j.view === 'list' ? listView(m, idx, reach) : pathView(m, idx, reach, !!(opts && opts.routeChanged)),
     idx >= n ? finale() : proposal(m, idx),
     plan.notes && plan.notes.length ? h('ul', { class: 'notes', 'aria-label': 'Notes about this plan' }, plan.notes.map((t) => h('li', null, t))) : null);
