@@ -4,7 +4,7 @@ import { dayIcon } from './art.js';
 import { h, inr, longDate } from './dom.js';
 import { budgetLine, stopsModel, summary, taskRows } from './model.js';
 import { applyAdjustment, pickItemAlt, setItemStatus, state, toggleTick } from './store.js';
-import { announce, go, say, stopThinking, think, todayIso, update } from './ui.js';
+import { announce, go, guide, primary, say, stopThinking, think, todayIso, update } from './ui.js';
 
 /** Suggested requests, chosen from what this plan actually has. */
 function adjustChips(plan) {
@@ -53,6 +53,17 @@ function itemControls(it) {
       h('button', { class: 'btn', type: 'button', onClick: () => update({ dayForm: null }, { focus: 'di-' + it.id }) }, 'Cancel')) : null];
 }
 
+/** "6 moments, 5 kept as planned and 1 skipped. Change any of them, then tap Open my plan." */
+function dayGuide(day, many) {
+  const n = day.items.length;
+  if (!n) return 'Nothing is on this run-sheet yet. Tap Open my plan and use Ask to adjust to add a moment.';
+  const count = (st) => day.items.filter((it) => it.status === st).length;
+  const parts = [[count('keep'), 'kept as planned'], [count('skip'), 'skipped'], [count('have'), 'sorted by you'], [count('own'), 'in your words']]
+    .filter(([c]) => c).map(([c, w]) => `${c} ${w}`);
+  const list = parts.length > 1 ? parts.slice(0, -1).join(', ') + ' and ' + parts[parts.length - 1] : parts[0];
+  return `${many ? day.label + ': ' : ''}${n} moment${n === 1 ? '' : 's'}, ${list}. Change any of them, then tap Open my plan.`;
+}
+
 export function dayView(opts = {}) {
   const plan = state.plan, days = plan.days;
   const di = Math.min(state.dayTab, days.length - 1), day = days[di];
@@ -61,6 +72,7 @@ export function dayView(opts = {}) {
     h('p', { class: 'step' }, (type === 'wedding' ? 'Wedding days' : type === 'birthday' ? 'Party day' : 'Event day') +
       ' · ' + (longDate(plan.profile.date) || 'date to be set')),
     h('h1', { class: 'disp h1', tabindex: '-1' }, day.title),
+    guide(dayGuide(day, days.length > 1)),
     h('p', { class: 'lead' }, 'Every moment is a suggestion: keep it, skip it, say you have it covered, pick another way, or write your own.'),
     days.length > 1 ? h('div', { class: 'tabs', role: 'group', 'aria-label': 'Which function' },
       days.map((d, i) => h('button', { class: 'tab', type: 'button', 'aria-pressed': String(i === di),
@@ -74,7 +86,7 @@ export function dayView(opts = {}) {
         itemControls(it))))),
     h('div', { class: 'acts' },
       h('button', { class: 'btn', type: 'button', onClick: () => go('journey', { focus: 'stop' }) }, 'Back to the journey'),
-      h('button', { class: 'btn mari', type: 'button', onClick: () => go('plan') }, 'Open my plan')));
+      primary({ onClick: () => go('plan') }, 'Open my plan')));
 }
 
 // ------------------------------------------------------------------ plan actions
@@ -179,7 +191,7 @@ function diffView(d) {
     h('p', { class: 'chgmsg' }, d.note,
       d.source === 'rules' ? null : d.source !== 'ai' ? h('span', { class: 'tt2' }, ' (Understood by the rules parser, not the AI.)') : null),
     h('div', { class: 'pact' },
-      h('button', { class: 'btn mari', type: 'button', onClick: applyDiff }, 'Apply changes'),
+      primary({ onClick: applyDiff }, 'Apply changes'),
       h('button', { class: 'btn', type: 'button', onClick: () => update({ diff: null }, { focus: 'adj-in' }) }, 'Keep as it is')));
 }
 
@@ -193,18 +205,25 @@ export function planView() {
   const late = rows.filter((t) => !t.ticked && t.late).length;
   const allDecided = m.every((x) => x.decided);
   const tick = (id) => { toggleTick(id); update({}, { focus: 'tk-' + id }); };
+  // one next step: the diff waiting for a decision, else the next task, else the invitation
+  const step = state.diff ? 'diff' : next ? 'task' : 'invite';
+  const doneWord = next && next.price ? 'Mark as booked' : 'Mark as done';
+  const guideText = step === 'diff' ? 'Check the before and after, then tap Apply changes, or Keep as it is.'
+    : step === 'task' ? `${late ? `${late} task${late > 1 ? 's are' : ' is'} late. ` : ''}Next up: ${next.text}${next.due ? ` (${next.dueText[0].toLowerCase() + next.dueText.slice(1)})` : ''}. Tap ${doneWord} once it is done.`
+      : 'Everything is booked. Tap Design the invitation card next.';
   return h('main', { class: 'wrap plan', id: 'main' },
     h('p', { class: 'step' }, 'My plan'),
     h('h1', { class: 'disp h1', tabindex: '-1' }, plan.title),
-    h('p', { class: 'lead' }, (allDecided ? 'Every stop is decided. ' : 'Some stops are still suggestions. ') +
-      (late ? `${late} task${late > 1 ? 's are' : ' is'} late: do ${late > 1 ? 'them' : 'it'} first.` : 'Nothing is late.')),
+    guide(guideText),
+    h('p', { class: 'lead' }, (allDecided ? 'Every stop is decided. ' : 'Some stops are still suggestions: decide them on the Journey. ') +
+      (late ? `Do the late task${late > 1 ? 's' : ''} first.` : 'Nothing is late.')),
     h('div', { class: 'plangrid' },
       h('section', { 'aria-labelledby': 'tasks-h' },
         next ? h('div', { class: 'next dark' },
           h('p', { class: 'step' }, 'Next up'),
           h('h2', { class: 'disp' }, next.text),
           h('p', null, [next.dueText, next.status, next.costText].filter(Boolean).join(' · ')),
-          h('button', { class: 'btn mari', type: 'button', onClick: () => tick(next.id) }, next.price ? 'Mark as booked' : 'Mark as done'))
+          step === 'task' ? primary({ onClick: () => tick(next.id) }, doneWord) : h('button', { class: 'btn', type: 'button', onClick: () => tick(next.id) }, doneWord))
           : h('div', { class: 'next dark' }, h('h2', { class: 'disp' }, 'Everything is booked.'), h('p', null, 'Enjoy the day.')),
         h('h2', { class: 'disp h2', id: 'tasks-h' }, 'All tasks'),
         h('ul', { class: 'tasks' }, rows.map((t) => h('li', { class: 'task' + (t.mandatory ? ' must' : '') },
@@ -238,9 +257,10 @@ export function planView() {
             onClick: () => runSuggestion(state.adjSuggest) }, 'Closest I can do: ' + state.adjSuggest.text)) : null,
           state.diff ? diffView(state.diff) : null))),
     h('div', { class: 'acts' },
-      h('button', { class: 'btn mari', type: 'button', onClick: () => addCal(rows) }, 'Add deadlines to calendar'),
+      h('button', { class: 'btn', type: 'button', onClick: () => addCal(rows) }, 'Add deadlines to calendar'),
       h('button', { class: 'btn', type: 'button', onClick: copyInvite }, 'Copy invite'),
-      h('button', { class: 'btn', type: 'button', onClick: () => go('invite') }, 'Design the invitation card'),
+      step === 'invite' ? primary({ onClick: () => go('invite') }, 'Design the invitation card')
+        : h('button', { class: 'btn', type: 'button', onClick: () => go('invite') }, 'Design the invitation card'),
       h('button', { class: 'btn', type: 'button', onClick: () => window.print() }, 'Print')),
     state.inviteShown ? h('div', { class: 'inv', role: 'region', 'aria-label': 'Invite text' }, plan.invite) : null,
     plan.notes && plan.notes.length ? h('ul', { class: 'notes' }, plan.notes.map((t) => h('li', null, t))) : null);

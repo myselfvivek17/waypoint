@@ -1,7 +1,7 @@
 /* Shared UI plumbing: state updates, routing, the "working on it" overlay, toasts and announcements. */
 import { busyMotif } from './art.js';
 import { state, save } from './store.js';
-import { clear, reducedMotion } from './dom.js';
+import { clear, h, reducedMotion } from './dom.js';
 
 export const ROUTES = ['welcome', 'chat', 'journey', 'day', 'plan', 'invite'];
 let renderFn = () => {};
@@ -93,6 +93,18 @@ export function announce(msg) {
   const el = document.getElementById('live');
   el.textContent = '';
   setTimeout(() => { el.textContent = msg; }, 60);
+}
+
+/** The one next step on a screen: marigold with a soft glow (a still ring under reduced motion).
+    Every screen renders exactly one; everything else is a secondary button. */
+export function primary(props, ...kids) {
+  return h('button', Object.assign({ type: 'button' }, props, { class: 'btn mari' + (props.class ? ' ' + props.class : ''), 'data-next': true }), ...kids);
+}
+
+/** The line under a screen's title that names that one next step. Built from the state on every
+    render, so it always matches what is on the screen. */
+export function guide(text) {
+  return h('p', { class: 'guide', id: 'guide' }, text);
 }
 
 /** Today's date as the server sees it (pinned for demos), falling back to the device. */

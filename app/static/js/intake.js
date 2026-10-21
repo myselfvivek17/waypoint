@@ -4,7 +4,7 @@ import { daysBetween, h, inr, longDate, parseISO, shortDate } from './dom.js';
 import { budgetLine, summary } from './model.js';
 import { adoptPlan, discardDetailEdits, freshChat, freshJourney, state } from './store.js';
 import { pinIcon } from './art.js';
-import { announce, go, rerender, say, stopThinking, think, todayIso, update } from './ui.js';
+import { announce, go, guide, primary, rerender, say, stopThinking, think, todayIso, update } from './ui.js';
 
 const STARTERS = ['Birthday', 'Wedding', 'House-warming', 'Community event'];
 const OPENING_Q = 'What are you celebrating?';
@@ -209,12 +209,15 @@ export function welcomeView() {
     h('div', { class: 'wrap wcol' },
       h('p', { class: 'disp wmark' }, 'Waypoint'),
       h('h1', { class: 'disp wh', tabindex: '-1' }, "Tell me what you're celebrating"),
+      guide(state.plan ? `Your plan for ${state.plan.title} is saved here. Tap Continue planning, or describe a new event below.`
+        : 'Nothing planned yet. Describe the event in one sentence and tap Begin, or tap one of the starters.'),
       h('form', { class: 'wform', onSubmit: submit },
         h('label', { class: 'sr', for: 'w-in' }, OPENING_Q),
         h('input', { id: 'w-in', class: 'wbig', type: 'text', autocomplete: 'off', maxlength: 500,
           placeholder: "Aditya's 22nd birthday, in November…", value: state.welcomeDraft,
           onInput: (e) => { state.welcomeDraft = e.target.value; } }),
-        h('button', { class: 'btn mari wgo', type: 'submit', disabled: state.busy }, 'Begin')),
+        state.plan ? h('button', { class: 'btn pri wgo', type: 'submit', disabled: state.busy }, 'Begin')
+          : primary({ class: 'wgo', type: 'submit', disabled: state.busy }, 'Begin')),
       h('div', { class: 'starters', role: 'group', 'aria-label': 'Or start with one of these' },
         STARTERS.map((label) => h('button', { class: 'chip', type: 'button', onClick: () => startChat(label) }, label))),
       h('p', { class: 'sample' }, 'Just looking around? Open a sample: ',
@@ -222,7 +225,7 @@ export function welcomeView() {
         h('button', { class: 'linkb', type: 'button', onClick: () => loadSample('wedding') }, 'A wedding in Jaipur')),
       state.plan ? h('div', { class: 'resume' },
         h('span', null, 'Saved on this device: ', h('b', null, state.plan.title)),
-        h('button', { class: 'btn pri', type: 'button', onClick: () => go('journey', { focus: 'stop' }) }, 'Continue planning')) : null,
+        primary({ onClick: () => go('journey', { focus: 'stop' }) }, 'Continue planning')) : null,
       state.err ? h('p', { class: 'err', role: 'alert' }, state.err) : null));
 }
 
@@ -274,8 +277,9 @@ function blockView(b) {
     h('p', { class: 'step' }, b.type === 'budget' ? "Let's make this work" : 'One thing to check'),
     h('h2', { class: 'disp qq', id: 'q-h', tabindex: '-1' }, b.title),
     h('p', { class: 'lead' }, b.body),
-    h('ol', { class: 'ways' }, b.ways.map((w) => h('li', null,
-      h('button', { class: 'way', type: 'button', onClick: () => pickWay(w) },
+    guide(`Pick one of these ${b.ways.length} ways to carry on. The first is the one I would choose.`),
+    h('ol', { class: 'ways' }, b.ways.map((w, i) => h('li', null,
+      h('button', { class: 'way', type: 'button', 'data-next': i === 0 ? true : null, onClick: () => pickWay(w) },
         h('span', { class: 'wt' }, w.title), h('span', { class: 'wd' }, w.detail))))));
 }
 
@@ -292,6 +296,7 @@ function questionView(c) {
     h('p', { class: 'step' }, `Question ${num} of ${total}`, ' ',
       h('span', { class: 'aitag' + (c.source === 'ai' ? ' ai' : '') }, c.source === 'ai' ? 'Asked by AI' : 'Rule-based')),
     h('h2', { class: 'disp qq', id: 'q-h', tabindex: '-1' }, c.reply),
+    guide(c.chips.length ? 'Tap a suggestion, or type your own answer and tap Next.' : 'Type your answer and tap Next.'),
     c.chips.length ? h('div', { class: 'chips', role: 'group', 'aria-label': 'Quick answers' },
       c.chips.map((chip) => h('button', { class: 'chip', type: 'button', disabled: state.busy,
         onClick: () => sendChat(chip, c.ask) }, chip))) : null,
@@ -301,7 +306,7 @@ function questionView(c) {
       h('input', { id: 'a-in', type: 'text', autocomplete: 'off', maxlength: 300, placeholder: c.placeholder,
         value: state.draft, 'aria-describedby': state.err ? 'a-err' : null,
         onInput: (e) => { state.draft = e.target.value; } }),
-      h('button', { class: 'btn pri', type: 'submit', disabled: state.busy }, 'Next')),
+      primary({ type: 'submit', disabled: state.busy }, 'Next')),
     state.err ? h('p', { class: 'err', id: 'a-err', role: 'alert' }, state.err) : null);
 }
 
@@ -316,10 +321,9 @@ function doneActions() {
         : "I'll walk you through one decision at a time, starting with the venue. Change any detail whenever you like."),
     h('div', { class: 'pact' },
       !p || state.planDirty
-        ? h('button', { class: 'btn mari', type: 'button', disabled: state.busy, onClick: buildPlan },
-          p ? 'Re-plan with these details' : 'Start the journey') : null,
-      p ? h('button', { class: 'btn', type: 'button', onClick: () => { discardDetailEdits(); go('journey', { focus: 'stop' }); } },
-        state.planDirty ? 'Keep the current plan (undo these edits)' : 'Back to the journey') : null),
+        ? primary({ disabled: state.busy, onClick: buildPlan }, p ? 'Re-plan with these details' : 'Start the journey') : null,
+      p ? (state.planDirty ? h('button', { class: 'btn', type: 'button', onClick: () => { discardDetailEdits(); go('journey', { focus: 'stop' }); } },
+        'Keep the current plan (undo these edits)') : primary({ onClick: () => go('journey', { focus: 'stop' }) }, 'Back to the journey')) : null),
     state.err ? h('p', { class: 'err', role: 'alert' }, state.err) : null);
 }
 
@@ -401,7 +405,10 @@ function detailsView() {
         n != null && n >= 0 ? (n === 0 ? 'today' : `${n} day${n === 1 ? '' : 's'} to go`) : null,
         p.area ? p.area : null].filter(Boolean).join(' · ')),
       sum ? h('p', { class: 'dsum' }, h('span', { 'data-budget-line': '' }, budgetLine(sum.budget)),
-        ` · ${sum.budget.decided} of ${sum.budget.count} stops decided`) : null),
+        ` · ${sum.budget.decided} of ${sum.budget.count} stops decided`) : null,
+      guide(!plan ? 'Check what I understood and edit anything that is wrong, then tap Start the journey.'
+        : state.planDirty ? 'Your details changed. Tap Re-plan with these details, or keep the current plan.'
+          : 'Your plan uses these details. Edit anything here, or tap Back to the journey.')),
     h('div', { class: 'dgrid' },
       h('div', { class: 'dside' },
         h('figure', { class: 'under' },

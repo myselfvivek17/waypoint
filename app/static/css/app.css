@@ -80,6 +80,12 @@ h1:focus-visible,h2:focus-visible{outline:3px solid var(--focus);outline-offset:
 .aitag{font-family:'Hanken Grotesk',system-ui,sans-serif;display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:700;letter-spacing:.04em;padding:2px 10px;border-radius:999px;border:1.5px solid var(--line);color:var(--muted);vertical-align:middle}
 .aitag.ai{border-color:var(--mari);color:var(--ink)}
 .aitag.ai::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--mari)}
+/* guidance: the one next step on a screen glows softly; the line under the title names it */
+[data-next]{animation:nextglow 2.6s ease-in-out infinite}
+.way[data-next]{border-color:var(--mari)}
+body:has(.sheetwrap) #view [data-next]{animation:none}
+.guide{display:flex;gap:10px;align-items:baseline;margin:0 0 18px;font-weight:600;max-width:70ch}
+.guide::before{content:"";flex:none;width:10px;height:10px;border-radius:50%;background:var(--mari);box-shadow:0 0 0 3px rgba(232,163,23,.3)}
 
 /* ---------- motion ---------- */
 .screen{animation:rise .5s ease both}
@@ -92,6 +98,7 @@ h1:focus-visible,h2:focus-visible{outline:3px solid var(--focus);outline-offset:
 @keyframes drift{from{transform:translate(0,0)}to{transform:translate(18px,-26px)}}
 @keyframes flicker{0%,100%{transform:scale(1) rotate(-2deg)}50%{transform:scale(1.12) rotate(2deg)}}
 @keyframes grow{from{transform:scaleY(0)}to{transform:scaleY(1)}}
+@keyframes nextglow{0%,100%{box-shadow:0 0 0 0 rgba(232,163,23,0)}50%{box-shadow:0 0 0 7px rgba(232,163,23,.35)}}
 @keyframes light{from{box-shadow:0 0 0 0 rgba(232,163,23,.6)}to{box-shadow:0 0 0 8px rgba(232,163,23,.28)}}
 
 /* ---------- banners ---------- */
@@ -497,4 +504,5 @@ h1:focus-visible,h2:focus-visible{outline:3px solid var(--focus);outline-offset:
  .bm-path{stroke-dashoffset:0}
  .bm-node{animation:none!important;fill:var(--mari);stroke:var(--mari)}
  .bm-flame{animation:none!important}
+ [data-next]{animation:none!important;box-shadow:0 0 0 4px rgba(232,163,23,.45)}
 }

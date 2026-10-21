@@ -5,7 +5,7 @@ import { api, errorText } from './api.js';
 import { $, h, longDate } from './dom.js';
 import { stopsModel } from './model.js';
 import { state } from './store.js';
-import { announce, say, stopThinking, think, update } from './ui.js';
+import { announce, guide, primary, say, stopThinking, think, update } from './ui.js';
 
 const W = 1080, H = 1350, M = 90;
 const LANGS = [['en', 'English'], ['hi', 'हिन्दी'], ['te', 'తెలుగు']];
@@ -372,13 +372,15 @@ export function inviteView() {
   return h('main', { class: 'wrap invite', id: 'main' },
     h('p', { class: 'step' }, 'Invite'),
     h('h1', { class: 'disp h1', tabindex: '-1' }, 'Make the invitation'),
+    guide(opts ? 'Pick one of the three versions, change anything you like, then tap Download PNG.'
+      : 'I am writing three versions of the words. Pick one when they arrive, then tap Download PNG.'),
     h('p', { class: 'lead' }, 'Written from your plan, drawn on this device. Edit anything; your photo never leaves the browser.'),
     h('div', { class: 'invgrid' },
       h('div', { class: 'invprev' },
         h('canvas', { id: 'card', class: 'card', width: W, height: H, role: 'img', 'aria-label': 'Invitation card preview' }),
         h('p', { id: 'fit-warn', class: 'err', role: 'status', hidden: true }, 'The text is too long for the card, so it is cut short. Shorten the message a little.'),
         h('div', { class: 'acts' },
-          h('button', { class: 'btn mari', id: 'dl-btn', type: 'button', onClick: download }, 'Download PNG'),
+          primary({ id: 'dl-btn', onClick: download }, 'Download PNG'),
           h('button', { class: 'btn', type: 'button', onClick: printCard }, 'Print or save as PDF'),
           h('button', { class: 'btn', type: 'button', onClick: copyText }, 'Copy text'),
           navigator.share ? h('button', { class: 'btn', type: 'button', onClick: share }, 'Share') : null)),

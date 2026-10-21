@@ -6,7 +6,7 @@ import { h, inr, s, safeUrl } from './dom.js';
 import { chipDefs } from './intake.js';
 import { allOptions, budgetLine, lineTotal, maxReach, nextIndex, stopsModel, summary } from './model.js';
 import { applyAdjustment, chooseOption, confirmStop, setStopStatus, state } from './store.js';
-import { announce, go, later, rerender, say, stopThinking, think, update } from './ui.js';
+import { announce, go, guide, later, primary, rerender, say, stopThinking, think, update } from './ui.js';
 
 const PHOTO_HOSTS = ['upload.wikimedia.org', 'api.openverse.org', 'fastly.4sqi.net'];
 const PAGE_HOSTS = ['commons.wikimedia.org', 'openverse.org', 'foursquare.com'];
@@ -297,7 +297,7 @@ function statusCard(m, idx) {
       h('p', { class: 'preason' }, body),
       st.mode === 'have' ? modePicker(cur) : null,
       h('div', { class: 'pact' },
-        h('button', { class: 'btn mari', type: 'button', onClick: next }, 'Continue'),
+        primary({ onClick: next }, 'Continue'),
         h('button', { class: 'btn', id: 'restore-btn', type: 'button', onClick: () => restore(cur) },
           st.status === 'skip' ? `Bring the ${label} back` : 'Show me suggestions again'),
         st.status !== 'skip' ? h('button', { class: 'btn', type: 'button',
@@ -600,7 +600,7 @@ function proposal(m, idx) {
       it.cap && it.cap < guests ? h('p', { class: 'err' }, `Fits about ${it.cap}, fewer than your ${guests} guests.`) : null,
       h('p', { class: 'preason' }, it.reason),
       h('div', { class: 'pact' },
-        h('button', { class: 'btn mari', type: 'button', onClick: () => lookGood(m) }, cur.decided ? 'Keep and continue' : 'Looks good'),
+        primary({ id: 'ok-btn', onClick: () => lookGood(m) }, cur.decided ? 'Keep and continue' : 'Looks good'),
         h('button', { class: 'btn', id: 'opt-btn', type: 'button', disabled: !alts.length,
           onClick: () => update({ sheet: true, changeMsg: '' }, { focus: 'sheet' }) }, 'Show options'),
         h('button', { class: 'btn', type: 'button', 'aria-expanded': String(state.change), 'aria-controls': 'chg',
@@ -634,7 +634,7 @@ function finale() {
       ? `, which is ${inr(b.total - b.budget)} over your budget. "Ask to adjust" on My plan can bring it back.`
       : `, with ${inr(b.budget - b.total)} of your budget still free.`)),
     h('div', { class: 'pact' },
-      h('button', { class: 'btn mari', type: 'button', onClick: () => go('day') }, 'See the event day'),
+      primary({ onClick: () => go('day') }, 'See the event day'),
       h('button', { class: 'btn', type: 'button', onClick: () => go('plan') }, 'Open my plan'),
       h('button', { class: 'btn', type: 'button', onClick: () => go('invite') }, 'Make the invitation')));
 }
@@ -704,10 +704,26 @@ export function sheetView() {
       h('div', { class: 'sheetcur' },
         h('div', null, h('p', { class: 'step', style: { margin: '0' } }, 'Your current choice'),
           h('b', null, cur.item.name), ' · ' + inr(cur.price)),
-        h('button', { class: 'btn mari', type: 'button', onClick: () => { state.sheet = false; lookGood(m); } },
-          cur.decided ? 'Keep and continue' : 'Looks good')),
+        primary({ onClick: () => { state.sheet = false; lookGood(m); } }, cur.decided ? 'Keep and continue' : 'Looks good')),
       state.changeMsg ? h('p', { class: 'chgmsg', role: 'status' }, state.changeMsg) : null,
       h('ul', { class: 'alts' }, alts)));
+}
+
+const VERB = { venue: 'choose a', theme: 'pick a', cake: 'choose a', music: 'choose the', invites: 'choose the', day: 'check the' };
+
+/** "Stop 2 of 6: pick a theme. Tap Looks good, or Show options to compare." */
+function guideText(m, idx) {
+  const n = m.length;
+  if (state.planning) return 'Planning the rest for you: I am confirming my suggestion for each remaining stop.';
+  if (!n) return 'Your route has no stops yet. Tap + Add a stop to begin.';
+  if (idx >= n) return 'Every stop is decided. Tap See the event day next.';
+  const cur = m[idx], label = cur.label.toLowerCase(), at = `Stop ${idx + 1} of ${n}`;
+  if (cur.status !== 'open') {
+    return `${at}: the ${label} is ${cur.status === 'skip' ? 'skipped' : 'yours'}. Tap Continue ${m.every((x) => x.decided) ? 'to finish the route' : 'for the next stop'}.`;
+  }
+  const doing = cur.decided ? `the ${label} is decided` : `${VERB[cur.key] || 'decide the'} ${label}`;
+  const other = allOptions(cur.s).length > 1 ? 'Show options to compare' : 'Change to ask for something else';
+  return `${at}: ${doing}. Tap ${cur.decided ? 'Keep and continue' : 'Looks good'}, or ${other}.`;
 }
 
 export function journeyView(opts) {
@@ -721,6 +737,7 @@ export function journeyView(opts) {
   return h('main', { class: 'wrap journey', id: 'main' },
     h('p', { class: 'step' }, 'The journey'),
     h('h1', { class: 'disp h1', tabindex: '-1' }, plan.title),
+    guide(guideText(m, idx)),
     h('ul', { class: 'strip', 'aria-label': 'Event details' },
       strip.map((c) => h('li', { class: 'schip' }, c.text)),
       h('li', null, h('button', { class: 'linkb', type: 'button', onClick: () => go('chat', { focus: 'question' }) }, 'Edit details'))),

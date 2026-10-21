@@ -78,6 +78,25 @@ def assert_no_null_text(page: Page) -> None:
         assert bad not in text, f"'{bad}' rendered in the page"
 
 
+def one_next_step(p: Page, where: str) -> str:
+    """Exactly one primary action on the screen, and a guide line under the title that names it."""
+    found = p.evaluate("""() => {
+        const vis = (e) => !!(e.offsetWidth || e.offsetHeight || e.getClientRects().length);
+        const next = [...document.querySelectorAll('#view [data-next]')].filter(vis);
+        const mari = [...document.querySelectorAll('#view .btn.mari')].filter(vis);
+        const g = document.getElementById('guide');
+        return { next: next.map((e) => e.textContent.trim()), stray: mari.filter((e) => !e.hasAttribute('data-next')).length,
+                 guide: g ? g.textContent : '' }; }""")
+    assert len(found["next"]) == 1, f"{where}: expected one primary action, got {found['next']}"
+    assert not found["stray"], f"{where}: a marigold button that is not the primary"
+    label = found["next"][0]
+    assert found["guide"], f"{where}: no guide line"
+    if p.locator("#view .way[data-next]").count() == 0:
+        assert label.split(":")[0] in found["guide"], f"{where}: guide {found['guide']!r} does not name {label!r}"
+    print(f"  next step on {where}: {label!r} · {found['guide']}")
+    return label
+
+
 def screen_totals(p: Page, nav: str) -> tuple[str, dict]:
     """The budget line and per-stop prices as one screen shows them."""
     p.click(f"nav >> text={nav}")
@@ -116,13 +135,15 @@ def flow(r: Run, dark: bool) -> None:
     if dark:
         p.click("#theme")
         assert p.evaluate("document.documentElement.dataset.theme") == "dark"
+    one_next_step(p, "welcome")
     r.shot("welcome" + suffix)
 
     r.step("type a brief → conversational intake")
     p.fill("#w-in", "Aditya's 22nd birthday, 30 people, ₹40k, in Gachibowli, Hyderabad, 15 Nov")
-    p.click("#view >> text=Begin")
+    p.click("#view button >> text=Begin")
     expect(p.locator("#q-h")).to_be_visible(timeout=40000)
     expect(p.locator(".evchips")).to_contain_text("30 guests")
+    one_next_step(p, "intake question")
     r.shot("chat" + suffix)
     done = p.locator("#view >> text=That's everything I need.")
     ready = p.locator(".chips .chip:not([disabled])")
@@ -139,6 +160,7 @@ def flow(r: Run, dark: bool) -> None:
     expect(p.locator(".under blockquote")).to_contain_text("30 guests")
     expect(p.locator(".dins li").first).to_contain_text("a guest")
     expect(p.locator(".dgroup")).to_have_count(7)
+    assert one_next_step(p, "details") == "Start the journey"
     r.step("edit a field on the details page")
     p.click("#ed-guests")
     p.fill("#ed-in", "32")
@@ -152,7 +174,7 @@ def flow(r: Run, dark: bool) -> None:
     r.shot("chat-done" + suffix)
 
     r.step("start the journey → plan, with the working-on-it overlay")
-    p.click("#view >> text=Start the journey")
+    p.click("#view button >> text=Start the journey")
     try:
         p.wait_for_selector("#busy:not([hidden])", timeout=4000)
         text = p.locator("#busy-tx").inner_text()
@@ -167,6 +189,8 @@ def flow(r: Run, dark: bool) -> None:
     assert p.evaluate("document.activeElement.id") == "prop-h", "focus should move to the active stop"
     expect(p.locator(".node.now")).to_have_count(1)
     expect(p.locator(".node")).to_have_count(6)
+    assert one_next_step(p, "journey") == "Looks good"
+    expect(p.locator("#guide")).to_contain_text("Stop 1 of 6: choose a venue")
     r.shot("journey" + suffix)
 
     r.step("venue card: distance from the area, OpenStreetMap link, labelled photos")
@@ -187,11 +211,11 @@ def flow(r: Run, dark: bool) -> None:
     r.shot("venue-card" + suffix, full=False)
 
     r.step("Why? reveals the rule")
-    p.click("#view >> text=Why?")
+    p.click("#view button >> text=Why?")
     expect(p.locator("#why")).to_contain_text("The rule behind it")
 
     r.step("confirm the venue")
-    p.click("#view >> text=Looks good")
+    p.click("#view button >> text=Looks good")
     expect(p.locator(".node.done")).to_have_count(1)
     expect(p.locator("#prop-h")).to_be_focused()
 
@@ -262,15 +286,16 @@ def flow(r: Run, dark: bool) -> None:
     p.click("button.sg >> text=Path")
 
     r.step("plan the rest")
-    btn = p.locator("#view >> text=Plan the rest for me")
+    btn = p.locator("#view button >> text=Plan the rest for me")
     expect(btn).to_be_enabled()
     btn.click()
     expect(p.locator("#fin-h")).to_be_visible(timeout=30000)
+    assert one_next_step(p, "finale") == "See the event day"
     expect(btn).to_be_disabled()
     r.shot("journey-done" + suffix)
 
     r.step("event day: every moment can be skipped, covered, swapped or rewritten")
-    p.click("#view >> text=See the event day")
+    p.click("#view button >> text=See the event day")
     expect(p.locator(".tli").first).to_be_visible()
     p.locator(".tli").nth(1).locator(".dctl button", has_text="Skip").click()
     expect(p.locator(".tli.skip")).to_have_count(1)
@@ -280,24 +305,28 @@ def flow(r: Run, dark: bool) -> None:
     p.fill("#dd-in", "Antakshari with the cousins")
     p.press("#dd-in", "Enter")
     expect(p.locator(".tl")).to_contain_text("Antakshari with the cousins")
+    assert one_next_step(p, "event day") == "Open my plan"
+    expect(p.locator("#guide")).to_contain_text("1 skipped")
     r.shot("day" + suffix)
 
     r.step("my plan: tick, adjust, diff, apply")
     p.click("nav >> text=My plan")
     expect(p.locator(".task").first).to_be_visible()
+    assert one_next_step(p, "my plan") in ("Mark as booked", "Mark as done")
     p.locator(".task input").first.check()
     check_totals_match(r, "after booking a task")
-    p.click("#view >> text=Cut the budget by 20%")
+    p.click("#view button >> text=Cut the budget by 20%")
     expect(p.locator("#diff-h")).to_be_visible(timeout=40000)
+    assert one_next_step(p, "my plan with a diff") == "Apply changes"
     r.shot("plan-diff" + suffix)
-    p.click("#view >> text=Apply changes")
+    p.click("#view button >> text=Apply changes")
     expect(p.locator("#diff-h")).to_have_count(0)
     check_totals_match(r, "after an adjustment")
     assert "32,000" in p.locator("[data-budget-line]").first.inner_text()
-    p.click("#view >> text=Copy invite")
+    p.click("#view button >> text=Copy invite")
     expect(p.locator(".inv")).to_be_visible()
     with p.expect_download() as dl:
-        p.click("#view >> text=Add deadlines to calendar")
+        p.click("#view button >> text=Add deadlines to calendar")
     assert dl.value.suggested_filename.endswith(".ics")
     r.shot("plan" + suffix)
     assert_no_null_text(p)
@@ -307,6 +336,7 @@ def flow(r: Run, dark: bool) -> None:
     expect(p.locator(".tone")).to_have_count(3, timeout=40000)
     card = p.locator("#card")
     expect(card).to_have_attribute("data-fit", "true")  # the plan's own text fits the card
+    assert one_next_step(p, "invite") == "Download PNG"
     p.locator(".tone").nth(1).click()
     p.fill("#inv-head", "Aadhya Venkatalakshmi Subramaniam-Ramachandran's very first birthday 🎂🎉👶🏽")
     p.locator(".chips button[lang=hi]").click()
@@ -366,6 +396,7 @@ def edges(r: Run) -> None:
     r.step("edge: impossible budget")
     p.goto(BASE + "/?demo=budget&reset=1")
     expect(p.locator(".ways .way")).to_have_count(3, timeout=40000)
+    one_next_step(p, "impossible budget")
     r.shot("edge-budget")
     p.locator(".way").first.click()
     expect(p.locator(".ways")).to_have_count(0, timeout=20000)
@@ -387,17 +418,17 @@ def edges(r: Run) -> None:
 
     r.step("ask to adjust: \"I don't want cake\" removes it from the stops, the day and the budget")
     p.goto(BASE + "/?reset=1")
-    p.click("#view >> text=Aditya's 22nd birthday")
+    p.click("#view button >> text=Aditya's 22nd birthday")
     expect(p.locator("#prop-h")).to_be_visible(timeout=160000)
     expect(p.locator(".node .nl", has_text="Cake")).to_have_count(1)
     p.click("nav >> text=My plan")
     p.fill("#adj-in", "I don't want cake")
-    p.click("#view >> text=Show me")
+    p.click("#view button >> text=Show me")
     expect(p.locator("#diff-h")).to_contain_text("Without the cake", timeout=40000)
     expect(p.locator(".diff")).to_contain_text("removed")
     expect(p.locator(".chgmsg").first).to_contain_text("freed")
     r.shot("adjust-no-cake")
-    p.click("#view >> text=Apply changes")
+    p.click("#view button >> text=Apply changes")
     check_totals_match(r, "after removing the cake")
     p.click("nav >> text=Journey")
     expect(p.locator(".node .nl", has_text="Cake")).to_have_count(0)
@@ -410,7 +441,7 @@ def edges(r: Run) -> None:
     g = geo.new_page()
     g.on("pageerror", lambda e: r.errors.append(f"pageerror: {e}"))
     g.goto(BASE + "/?reset=1")
-    g.click("#view >> text=A wedding in Jaipur")
+    g.click("#view button >> text=A wedding in Jaipur")
     expect(g.locator("#prop-h")).to_be_visible(timeout=160000)
     g.click("nav >> text=Details")
     expect(g.locator("#loc-btn")).to_be_visible()
@@ -421,7 +452,7 @@ def edges(r: Run) -> None:
     print("  resolved area:", where.splitlines()[0])
     assert "Jaipur" not in where
     expect(g.locator(".offb.dirty")).to_have_count(0)  # details page itself offers the re-plan
-    expect(g.locator("#view >> text=Re-plan with these details")).to_be_visible()
+    expect(g.locator("#view button >> text=Re-plan with these details")).to_be_visible()
     g.screenshot(path=str(r.shots / "17-use-my-location.png"), full_page=True)
     geo.close()
 
@@ -448,7 +479,7 @@ def run_axe(browser, axe_path: Path, shots: Path) -> list:
         page.goto(BASE + "/?reset=1")
         page.evaluate(f"localStorage.setItem('waypoint:theme', '{theme}')")
         page.goto(BASE + "/")
-        page.click("#view >> text=Aditya's 22nd birthday")
+        page.click("#view button >> text=Aditya's 22nd birthday")
         page.wait_for_selector("#prop-h", timeout=160000)
         for route in ("journey", "day", "plan", "invite", "chat", "welcome"):
             page.evaluate(f"location.hash = '{route}'")
@@ -474,7 +505,7 @@ def run_axe(browser, axe_path: Path, shots: Path) -> list:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--live", action="store_true", help="use the real model from .env")
-    ap.add_argument("--shots", default=str(ROOT.parent / "celebration-planner-notes" / "shots" / "v2"))
+    ap.add_argument("--shots", default=str(ROOT.parent / "celebration-planner-notes" / "shots" / "v3"))
     ap.add_argument("--axe", default="")
     ap.add_argument("--chrome", default=CHROME)
     args = ap.parse_args()
