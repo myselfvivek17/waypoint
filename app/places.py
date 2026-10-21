@@ -1,7 +1,10 @@
 """Real places and real photos only.
 
 * Nominatim geocodes the area the user typed.
-* Overpass finds named venues, cafés, halls, parks, bakeries, parking and stays nearby.
+* Overpass finds named venues, cafés, halls, parks, bakeries, parking and stays nearby. Each
+  instance fails fast and a dead one is skipped for a while (circuit breaker).
+* When every Overpass instance is down, Nominatim's bounded POI search is the fallback: one
+  request per category around the event point, results merged, de-duplicated and cached.
 * Wikimedia Commons / Wikidata supply photos of the place itself, always with author and licence.
 * Foursquare (optional, only with ``FOURSQUARE_API_KEY``) adds real photos of the venue.
 * Openverse supplies openly licensed "similar vibe" photos, which are never presented as the venue.
@@ -19,6 +22,7 @@ import math
 import os
 import re
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from urllib.parse import unquote, urlparse
 
@@ -38,8 +42,14 @@ OVERPASS = (
     "https://overpass-api.de/api/interpreter",
     "https://lz4.overpass-api.de/api/interpreter",
     "https://z.overpass-api.de/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
 )
-OVERPASS_TIMEOUT = float(os.getenv("WP_OVERPASS_TIMEOUT", "45"))
+# Fail fast: a refused or hung instance must not hold the plan up. The budget covers all
+# instances together; a failed instance is skipped for OVERPASS_COOLDOWN seconds.
+OVERPASS_CONNECT = 3.0
+OVERPASS_BUDGET = float(os.getenv("WP_OVERPASS_TIMEOUT", "8"))
+OVERPASS_COOLDOWN = 600.0
 COMMONS = "https://commons.wikimedia.org/w/api.php"
 WIKIDATA = "https://www.wikidata.org/w/api.php"
 OPENVERSE = "https://api.openverse.org/v1/images/"
@@ -54,8 +64,11 @@ THUMB_WIDTH = 960  # Wikimedia only renders a fixed set of standard widths
 
 # Minimum seconds between two requests to the same host (Nominatim policy: 1/s).
 MIN_GAP = {"nominatim.openstreetmap.org": 1.0, "overpass-api.de": 1.0, "lz4.overpass-api.de": 1.0,
-           "z.overpass-api.de": 1.0, "commons.wikimedia.org": 0.1, "www.wikidata.org": 0.1,
+           "z.overpass-api.de": 1.0, "maps.mail.ru": 1.0, "overpass.private.coffee": 1.0,
+           "commons.wikimedia.org": 0.1, "www.wikidata.org": 0.1,
            "api.openverse.org": 3.1, "places-api.foursquare.com": 0.2}  # Openverse: 20/min without a key
+# The only hosts this module ever calls; anything else is refused before a socket is opened.
+ALLOWED_HOSTS = frozenset(MIN_GAP)
 
 LABELS = {
     "cafe": "Café", "restaurant": "Restaurant", "events_venue": "Event venue",
@@ -91,6 +104,7 @@ class Place(BaseModel):
     veg: bool = False
     cuisine: str | None = None
     capacity: int | None = None
+    website: str | None = None
     photo: PhotoHint | None = None
 
 
@@ -108,6 +122,9 @@ class Photo(BaseModel):
 class PlaceSet(BaseModel):
     center: Point | None = None
     places: list[Place] = []
+    # "overpass" or "nominatim" when a source answered (even with nothing nearby); "" when
+    # every source failed, which is the only case the plan calls listings "unavailable".
+    source: str = ""
 
     def get(self, place_id: str | None) -> Place | None:
         return next((p for p in self.places if p.id == place_id), None) if place_id else None
@@ -135,15 +152,19 @@ class _Cache:
 
 geo_cache = _Cache(ttl=24 * 3600)
 place_cache = _Cache(ttl=6 * 3600)
+POI_TTL = 24 * 3600  # Nominatim fallback results
 photo_cache = _Cache(ttl=24 * 3600)
 _last: dict[str, float] = {}
 _locks: dict[str, asyncio.Lock] = {}
 
 
 async def _get_json(url: str, *, params: dict | None = None, data: dict | None = None,
-                    timeout: float = 10.0, headers: dict | None = None) -> dict | list | None:
+                    timeout: float | httpx.Timeout = 10.0, headers: dict | None = None) -> dict | list | None:
     """Rate-limited GET/POST returning parsed JSON, or None on any failure."""
     host = urlparse(url).hostname or ""
+    if host not in ALLOWED_HOSTS:
+        log.warning("refused a call to a host that is not allowed")
+        return None
     lock = _locks.setdefault(host, asyncio.Lock())
     try:
         async with lock:
@@ -322,7 +343,7 @@ def parse_overpass(payload: dict | None, center: Point) -> list[Place]:
     out: dict[str, Place] = {}
     for el in (payload or {}).get("elements", []) if isinstance(payload, dict) else []:
         tags = el.get("tags") or {}
-        name = (tags.get("name:en") or tags.get("name") or "").strip()
+        name = " ".join(str(tags.get("name:en") or tags.get("name") or "").split())
         lat = el.get("lat", (el.get("center") or {}).get("lat"))
         lon = el.get("lon", (el.get("center") or {}).get("lon"))
         kind = next((tags[k] for k in ("amenity", "leisure", "tourism", "shop") if tags.get(k) in LABELS), None)
@@ -338,23 +359,143 @@ def parse_overpass(payload: dict | None, center: Point) -> list[Place]:
             outdoor=kind in OUTDOOR or tags.get("outdoor_seating") == "yes" and kind == "cafe",
             wheelchair=tags.get("wheelchair"), veg=tags.get("diet:vegetarian") in ("yes", "only"),
             cuisine=(tags.get("cuisine") or None), capacity=int(cap) if cap.isdigit() else None,
-            photo=_photo_from_tags(tags, float(lat), float(lon)),
+            website=_website(tags), photo=_photo_from_tags(tags, float(lat), float(lon)),
         )
-    rows, seen = [], set()
-    for p in sorted(out.values(), key=lambda p: p.dist_km):
-        if p.name.lower() not in seen:  # chains and duplicate nodes: keep the closest
-            seen.add(p.name.lower())
+    return merge_places(list(out.values()))
+
+
+def _website(tags: dict) -> str | None:
+    url = str(tags.get("website") or tags.get("contact:website") or "").strip()
+    return url if re.fullmatch(r"https?://[^\s\"'<>]{3,200}", url) else None
+
+
+def merge_places(*lists: list[Place]) -> list[Place]:
+    """Places from any number of sources as one list, closest first. The same OSM object
+    (same id) or the same name (chains, a node and a way for one building) is kept once."""
+    rows: list[Place] = []
+    ids: set[str] = set()
+    names: set[str] = set()
+    for p in sorted((p for rows_ in lists for p in rows_), key=lambda p: p.dist_km):
+        name = re.sub(r"\W+", " ", unicodedata.normalize("NFKD", p.name.lower())
+                      .encode("ascii", "ignore").decode()).strip()
+        if p.id not in ids and name not in names:
+            ids.add(p.id)
+            names.add(name)
             rows.append(p)
     return rows
 
 
+_down: dict[str, float] = {}  # Overpass instance -> monotonic time until which it is skipped
+
+
 async def _overpass(query: str) -> dict | None:
-    """Try each official Overpass instance until one answers."""
+    """Try each public Overpass instance until one answers, within ``OVERPASS_BUDGET`` seconds
+    in total. An instance that fails is skipped for ``OVERPASS_COOLDOWN`` seconds."""
+    deadline = time.monotonic() + OVERPASS_BUDGET
     for url in OVERPASS:
-        payload = await _get_json(url, data={"data": query}, timeout=OVERPASS_TIMEOUT)
+        now = time.monotonic()
+        left = deadline - now
+        if _down.get(url, 0.0) > now:
+            continue
+        if left <= 0.5:
+            break
+        timeout = httpx.Timeout(left, connect=min(OVERPASS_CONNECT, left))
+        try:
+            payload = await asyncio.wait_for(_get_json(url, data={"data": query}, timeout=timeout), left)
+        except TimeoutError:
+            payload = None
         if isinstance(payload, dict) and "elements" in payload:
+            _down.pop(url, None)
             return payload
+        _down[url] = time.monotonic() + OVERPASS_COOLDOWN
+        log.info("overpass instance skipped for %.0f s", OVERPASS_COOLDOWN)
     return None
+
+
+# Nominatim fallback: free-text category searches inside a box around the point. A name hit
+# whose OSM tag is not one we know ("Sri Sai Function Hall" tagged only as a building) gets
+# the searched kind, but only when its name says so.
+POI_VENUE = (("cafe", None), ("restaurant", None), ("banquet hall", "banquet_hall"),
+             ("function hall", "banquet_hall"), ("convention centre", "conference_centre"),
+             ("community hall", "community_centre"), ("park", None), ("bakery", None))
+POI_NEARBY = (("restaurant", None), ("cafe", None), ("parking", None), ("hotel", None))
+POI_NAME_HINT = re.compile(r"hall|banquet|convention|function|kalyana|mandap|garden|palace", re.I)
+POI_LOOSE_CATEGORIES = {"amenity", "building", "leisure", "tourism", "shop"}
+
+
+def _viewbox(c: Point, radius: int) -> str:
+    dlat = radius / 111_320
+    dlon = radius / (111_320 * max(math.cos(math.radians(c.lat)), 0.01))
+    return f"{c.lon - dlon:.5f},{c.lat + dlat:.5f},{c.lon + dlon:.5f},{c.lat - dlat:.5f}"
+
+
+def nominatim_elements(rows: list | None, fallback_kind: str | None = None) -> list[dict]:
+    """Nominatim POI rows -> Overpass-shaped elements (same ``node/123`` ids and tags), so one
+    parser serves both sources. Extra tags (capacity, cuisine, website, photos) are kept."""
+    out = []
+    for r in rows if isinstance(rows, list) else []:
+        if not isinstance(r, dict) or r.get("osm_type") not in ("node", "way", "relation") or not r.get("osm_id"):
+            continue
+        cat, typ, name = r.get("category"), r.get("type"), str(r.get("name") or "").strip()
+        tags = {k: str(v) for k, v in (r.get("extratags") or {}).items() if isinstance(k, str)}
+        if name:
+            tags["name"] = name
+        if cat in ("amenity", "leisure", "tourism", "shop") and typ in LABELS:
+            tags[cat] = typ
+        elif fallback_kind and cat in POI_LOOSE_CATEGORIES and POI_NAME_HINT.search(name):
+            tags["amenity"] = fallback_kind
+        else:
+            continue
+        try:
+            lat, lon = float(r["lat"]), float(r["lon"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        out.append({"type": r["osm_type"], "id": r["osm_id"], "lat": lat, "lon": lon, "tags": tags})
+    return out
+
+
+async def _poi_search(term: str, c: Point, radius: int) -> list[dict] | None:
+    """One bounded Nominatim search, cached for a day. None when Nominatim failed."""
+    box = _viewbox(c, radius)
+    key = ("poi", term, box)
+    hit = place_cache.get(key)
+    if hit is not None:
+        return hit
+    rows = await _get_json(NOMINATIM, params={"q": term, "format": "jsonv2", "viewbox": box, "bounded": 1,
+                                              "limit": 20, "addressdetails": 1, "extratags": 1,
+                                              "accept-language": "en"}, timeout=8.0)
+    if not isinstance(rows, list):
+        return None
+    place_cache.put(key, rows, ttl=POI_TTL)
+    return rows
+
+
+async def _nominatim_pois(c: Point, radius: int, terms: tuple) -> dict | None:
+    """Every category in ``terms`` as one Overpass-shaped payload; None when every search
+    failed. Requests run one after another: the per-host gap keeps them ≥ 1 s apart."""
+    found: dict[tuple, dict] = {}
+    answered = False
+    for term, kind in terms:
+        rows = await _poi_search(term, c, radius)
+        answered = answered or rows is not None
+        for el in nominatim_elements(rows, kind):
+            # The box is a square: drop its corners so the radius means the same for both sources.
+            if distance_km(c.lat, c.lon, el["lat"], el["lon"]) <= radius / 1000:
+                seen = found.setdefault((el["type"], el["id"]), el)  # found by two searches: keep all tags
+                seen["tags"] = {**el["tags"], **seen["tags"]}
+    return {"elements": list(found.values())} if answered else None
+
+
+async def _lookup(overpass_query: str, c: Point, radius: int, terms: tuple) -> tuple[dict | None, str]:
+    """Overpass first, then the Nominatim fallback: (payload, source), source "" when both failed."""
+    payload = await _overpass(overpass_query)
+    if payload is not None:
+        return payload, "overpass"
+    payload = await _nominatim_pois(c, radius, terms)
+    if payload is not None:
+        log.info("overpass unavailable; %d places from nominatim", len(payload["elements"]))
+        return payload, "nominatim"
+    return None, ""
 
 
 def _venue_query(c: Point, radius: int) -> str:
@@ -409,10 +550,10 @@ async def _venues(area: str, guests: int | None, point: Point | None = None) -> 
     key = ("venues", round(center.lat, 3), round(center.lon, 3), radius)
     hit = place_cache.get(key)
     if hit is None:
-        payload = await _overpass(_venue_query(center, radius))
-        hit = parse_overpass(payload, center)
-        place_cache.put(key, hit, ttl=None if payload else 120)
-    return PlaceSet(center=center, places=hit)
+        payload, source = await _lookup(_venue_query(center, radius), center, radius, POI_VENUE)
+        hit = (parse_overpass(payload, center), source)
+        place_cache.put(key, hit, ttl=None if source == "overpass" else POI_TTL if source else 120)
+    return PlaceSet(center=center, places=hit[0], source=hit[1])
 
 
 async def nearby(lat: float, lon: float) -> list[Place]:
@@ -421,7 +562,7 @@ async def nearby(lat: float, lon: float) -> list[Place]:
     key = ("nearby", round(lat, 3), round(lon, 3))
     hit = place_cache.get(key)
     if hit is None:
-        payload = await _overpass(_nearby_query(center, 1500))
+        payload, source = await _lookup(_nearby_query(center, 1500), center, 1500, POI_NEARBY)
         rows = parse_overpass(payload, center)
         # Unnamed parking is common and still useful; parse_overpass drops unnamed places,
         # so label parking explicitly from the raw payload.
@@ -436,7 +577,7 @@ async def nearby(lat: float, lon: float) -> list[Place]:
                                       dist_km=round(distance_km(lat, lon, lat2, lon2), 2)))
         rows.sort(key=lambda p: p.dist_km)
         hit = rows
-        place_cache.put(key, hit, ttl=None if payload else 120)
+        place_cache.put(key, hit, ttl=None if source == "overpass" else POI_TTL if source else 120)
     return hit
 
 

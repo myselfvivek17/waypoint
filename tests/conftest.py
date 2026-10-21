@@ -44,6 +44,8 @@ def isolated(monkeypatch):
     for c in (places.geo_cache, places.place_cache, places.photo_cache):
         c.data.clear()
     places._inflight.clear()
+    places._down.clear()
+    places._last.clear()
     monkeypatch.setattr(places, "MIN_GAP", {})
     from app.main import limiter
     limiter.reset()

@@ -347,6 +347,8 @@ def assemble(draft: DraftPlan, fb: DraftPlan, p: Profile, r: RulesResult, ps: Pl
         notes.append(f"Prices were scaled down so the plan fits your {inr(p.budget)} budget.")
     if ps.places:
         notes.append("Venues and bakeries come from OpenStreetMap; check prices and availability with them.")
+    elif ps.source:
+        notes.append("No named venues were found on OpenStreetMap near there, so venues are described, not named.")
     elif p.area:
         notes.append("Live place listings were unavailable, so venues are described, not named.")
     invite = clip(draft.invite.replace("null", "").replace("None", ""), CAPS["invite"]) or fb.invite
