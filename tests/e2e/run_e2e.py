@@ -591,6 +591,26 @@ def guided(r: Run, dark: bool) -> None:
     both_widths(r, "v3-item4-list" + sfx, at=".slist li.now")
     p.click("button.sg >> text=Path")
 
+    r.step("hesitation: after ~8 s without a click or key press, a hint appears under the buttons, once")
+    hint = p.locator("#hint")
+    expect(hint).to_have_attribute("aria-live", "polite")
+    expect(hint).to_be_empty()
+    p.wait_for_timeout(5000)
+    expect(hint).to_be_empty()
+    expect(hint).to_contain_text("Not sure? Tap Looks good. You can change it later.", timeout=6000)
+    overlap = p.evaluate("""() => { const a = document.getElementById('hint').getBoundingClientRect();
+        return [...document.querySelectorAll('#view button, #view a, #view img, #view h2, #view p')]
+          .filter((e) => !document.getElementById('hint').contains(e) && e.offsetParent)
+          .map((e) => e.getBoundingClientRect())
+          .filter((b) => b.width && a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom).length; }""")
+    assert overlap == 0, f"the hint overlaps {overlap} element(s)"
+    both_widths(r, "v3-item5-hint" + sfx, at="#hint")
+    p.click("#hint-x")
+    expect(hint).to_be_empty()
+    expect(p.locator("#ok-btn")).to_be_focused()
+    p.wait_for_timeout(9000)
+    expect(hint).to_be_empty()  # once per stop
+
 
 def run_axe(browser, axe_path: Path, shots: Path) -> list:
     """axe-core on each screen; the CSP is bypassed only to inject the checker."""

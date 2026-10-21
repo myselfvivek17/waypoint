@@ -6,6 +6,7 @@ import { h, inr, s, safeUrl } from './dom.js';
 import { chipDefs } from './intake.js';
 import { allOptions, budgetLine, lineTotal, maxReach, nextIndex, stopsModel, summary } from './model.js';
 import { applyAdjustment, chooseOption, confirmStop, setStopStatus, state } from './store.js';
+import { tourOpen } from './tour.js';
 import { announce, go, guide, later, primary, rerender, say, stopThinking, think, update } from './ui.js';
 
 const PHOTO_HOSTS = ['upload.wikimedia.org', 'api.openverse.org', 'fastly.4sqi.net'];
@@ -71,6 +72,60 @@ function fractions(n) {
 }
 
 let lastFrac = null, lastSegs = null;
+
+// ------------------------------------------------------------------ hesitation hint
+// After about 8 s with no click or key press on a stop, a small hint appears under its buttons:
+// once per stop, dismissible, in a polite live region that is always there (so it is announced).
+
+const HINT_MS = 8000;
+const hinted = new Set();
+let hintFor = null, hintShown = null, hintTimer = 0;
+
+function hintText(cur) {
+  const btn = cur.status !== 'open' ? 'Continue' : cur.decided ? 'Keep and continue' : 'Looks good';
+  return `Not sure? Tap ${btn}. You can change it later.`;
+}
+
+function hintBox(cur) {
+  return h('div', { class: 'hint', id: 'hint', role: 'status', 'aria-live': 'polite' },
+    hintShown === cur.key ? hintBody(cur) : null);
+}
+
+function hintBody(cur) {
+  return [h('span', null, hintText(cur)),
+    h('button', { class: 'hintx', id: 'hint-x', type: 'button', 'aria-label': 'Dismiss the hint', onClick: dismissHint }, '×')];
+}
+
+function dismissHint() {
+  hintShown = null;
+  const box = document.getElementById('hint');
+  if (box) box.replaceChildren();
+  const ok = document.querySelector('#view [data-next]');
+  if (ok) ok.focus();
+}
+
+function armHint(key) {
+  if (key !== hintFor) { hintFor = key; hintShown = null; clearTimeout(hintTimer); hintTimer = 0; }
+  if (key && !hinted.has(key) && !hintTimer) hintTimer = setTimeout(showHint, HINT_MS);
+}
+
+function showHint() {
+  hintTimer = 0;
+  if (state.route !== 'journey' || !state.plan || hinted.has(hintFor)) return;
+  const m = stopsModel(state), cur = m[current(m)];
+  if (!cur || cur.key !== hintFor) return;
+  if (state.sheet || state.planning || state.busy || state.menu || tourOpen() || document.hidden) { armHint(hintFor); return; }
+  const box = document.getElementById('hint');
+  if (!box) return;
+  hinted.add(cur.key);
+  hintShown = cur.key;
+  box.replaceChildren(...hintBody(cur));
+}
+
+// Any click or key press is an action: the wait starts again (only until the hint has shown).
+for (const ev of ['pointerdown', 'keydown']) {
+  document.addEventListener(ev, () => { if (hintTimer) { clearTimeout(hintTimer); hintTimer = 0; armHint(hintFor); } }, true);
+}
 
 // ------------------------------------------------------------------ actions
 
@@ -298,11 +353,12 @@ function statusCard(m, idx) {
       h('p', { class: 'preason' }, body),
       st.mode === 'have' ? modePicker(cur) : null,
       h('div', { class: 'pact' },
-        primary({ onClick: next }, 'Continue'),
+        primary({ id: 'ok-btn', onClick: next }, 'Continue'),
         h('button', { class: 'btn', id: 'restore-btn', type: 'button', onClick: () => restore(cur) },
           st.status === 'skip' ? `Bring the ${label} back` : 'Show me suggestions again'),
         st.status !== 'skip' ? h('button', { class: 'btn', type: 'button',
           onClick: () => { setStopStatus(cur.key, 'open'); update({ choiceForm: st.status, choiceNote: st.note, choiceCost: st.user_cost == null ? '' : String(st.user_cost) }, { focus: 'ch-note' }); } }, 'Edit') : null),
+      hintBox(cur),
       h('div', { class: 'choice' }, h('button', { class: 'chip quiet', id: 'rm-btn', type: 'button', onClick: () => removeStop(cur) },
         state.confirmRemove === cur.key ? `Tap again to remove the ${label}` : 'Remove stop'))));
 }
@@ -623,6 +679,7 @@ function proposal(m, idx) {
           onClick: () => update({ sheet: true, changeMsg: '' }, { focus: 'sheet' }) }, 'Show options'),
         h('button', { class: 'btn', type: 'button', 'aria-expanded': String(state.change), 'aria-controls': 'chg',
           onClick: () => update({ change: !state.change, changeMsg: '' }, { focus: state.change ? null : 'c-in' }) }, 'Change')),
+      hintBox(cur),
       choiceRow(m, cur),
       modePicker(cur),
       h('button', { class: 'linkb', type: 'button', 'aria-expanded': String(state.why), 'aria-controls': 'why',
@@ -752,6 +809,7 @@ export function journeyView(opts) {
   const strip = chipDefs(plan.profile).filter((c) => c.key !== 'access');
   const setView = (v) => () => setJ({ view: v });
   const undecided = m.some((x) => !x.decided);
+  armHint(idx < n && !state.planning ? m[idx].key : null);
   return h('main', { class: 'wrap journey', id: 'main' },
     h('p', { class: 'step' }, 'The journey'),
     h('h1', { class: 'disp h1', tabindex: '-1' }, plan.title),
