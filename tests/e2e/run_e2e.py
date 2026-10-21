@@ -910,7 +910,14 @@ def area_picker(r: Run, dark: bool) -> None:
         p.click("#view button >> text=Start the journey")
         expect(p.locator("#prop-h")).to_be_visible(timeout=150000)
         p.click("button.sg >> text=Map")
-        expect(p.locator(".around")).to_contain_text("Searching around: Pinned spot near Jillelaguda, Hyderabad")
+        # The plan is searched around the pin; the map then centres on the pin, or on the real venue
+        # found near it ("…, the venue") when there is one.
+        searched = p.evaluate("import('/js/store.js').then((m) => [m.state.plan.area_point.label,"
+                              " m.state.plan.stops[0].rec.dist_km])")
+        assert searched[0] == "Pinned spot near Jillelaguda, Hyderabad", searched
+        assert searched[1] is None or searched[1] <= 3, searched
+        expect(p.locator(".around")).to_contain_text(re.compile(
+            r"Searching around: (Pinned spot near Jillelaguda, Hyderabad|.+, the venue)"))
     p.unroute_all()
 
 

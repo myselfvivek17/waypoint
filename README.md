@@ -54,7 +54,10 @@ A first-time user (or a judge) should never wonder what to click next:
   *"Next up: Book the venue (book by 25 Oct). Tap Mark as booked once it is done."*
 - **A three-step tour** on the first visit to the Journey (the path, the stop's buttons, the budget bar),
   and short ones on My plan and Invite: small popovers placed beside their target, never on it, with
-  Next / Back / Skip, arrow keys, Esc and a focus trap. Shown once per screen; the header's **?** replays
+  Next / Back / Skip, arrow keys, Esc and a focus trap. A soft scrim dims the page around a ring drawn
+  tightly round the target; the arrow points at the button the step names, and the step's copy names the
+  buttons in bold (**Looks good** keeps it · **Show options** compares · **More** has Skip, I already have
+  this, Write my own). The counter reads *Tour 2/3*, so it isn't confused with *Stop 1 of 6*. Shown once per screen; the header's **?** replays
   it (elsewhere it points at the screen's next step). Not shown under `?demo=` or in automated browsers
   unless `?tour=1` asks for it.
 - **The choice in plain words.** The model writes a short question with each pick; code keeps it only if
@@ -115,7 +118,7 @@ one-tap offer — never silently nothing. Stops you've already booked are never 
    ├─ POST /api/whereami  places.py               │
    ├─ POST /api/ics       planner.py              ▼
    └─ GET  /api/health          OpenRouter (free models only)
-                                OSM Nominatim + Overpass · Wikimedia Commons / Wikidata · Openverse · Foursquare (optional)
+                                OSM Overpass → Nominatim fallback · Wikimedia Commons / Wikidata · Openverse · Foursquare (optional)
 ```
 
 **The split between rules and the model.** The rules engine decides *what must be true* (budget band,
@@ -153,6 +156,35 @@ cache keyed by a hash of the request, at most 4 concurrent calls. A failed attem
 bad JSON) is **retried from the next model in `WP_LLM_MODEL`**, then the deterministic fallback is used.
 **$0 is enforced in code**: only `openrouter/free` or ids ending in `:free` are accepted, and a reply that
 reports a cost is discarded.
+
+## Where the places come from
+
+Every venue, bakery, park, parking spot and stay is a real OpenStreetMap object with its OSM id. The model
+only ranks and explains places passed to it by id. Sources are tried in order:
+
+1. **Overpass** (one query for all categories around the point). Public instances, in order:
+   overpass-api.de, lz4 and z.overpass-api.de, maps.mail.ru and overpass.private.coffee. It **fails
+   fast**: 3 s to connect, 8 s for all instances together. A **circuit breaker** skips an instance for
+   10 minutes after it fails, so a dead host costs nothing on the next lookup.
+2. **Nominatim bounded POI search** when every Overpass instance is down, which is the case from some
+   networks. Each category is one search inside a box around the event point (`viewbox` + `bounded=1`):
+   cafe, restaurant, banquet hall, function hall, convention centre, community hall, park and bakery for
+   venues; restaurant, cafe, parking and hotel for *Around the venue*. Requests are ≥ 1 s apart
+   (Nominatim policy) and cached for 24 h. Results are merged and de-duplicated by OSM id and name (chains
+   keep the closest branch), cut to the search radius, and the distance is computed locally. Their
+   `extratags` provide capacity, cuisine, website and `wikimedia_commons` photos when present. A hall
+   tagged only as a building is kept when its name says so ("Sri Sai Function Hall").
+3. **Nothing reachable**: the plan is honest and says *"Live place listings were unavailable, so venues are
+   described, not named."* It says this only when every source failed. When a source answered but nothing
+   is mapped nearby, the note says that instead.
+
+Photon (photon.komoot.io) was tried and is not used: it ignores the location for POI searches. Places code
+calls only the hosts on an allow list (`places.ALLOWED_HOSTS`); anything else is refused before a socket
+opens. To check the chain against the live services:
+
+```bash
+.venv/bin/python -m scripts.live_places "Gachibowli, Hyderabad" "Meerpet Road, Jillelaguda"
+```
 
 ## Photos and attribution
 
@@ -222,8 +254,8 @@ appears instead of a stand-in. Map data © OpenStreetMap contributors (ODbL).
   `Retry-After`); generic 500s without stack traces; no API docs exposed.
 - Front end builds the DOM with `textContent` only (`js/dom.js`); model, place and user text is never
   parsed as HTML; links only to Commons, Openverse, Foursquare and OpenStreetMap; `null` is never rendered.
-- Outbound calls: proper User-Agent, per-host rate limiting (Nominatim 1 req/s, Openverse within its
-  anonymous quota), timeouts, caching.
+- Outbound calls: proper User-Agent, an allow list of hosts, per-host rate limiting (Nominatim 1 req/s,
+  Openverse within its anonymous quota), timeouts, a circuit breaker for Overpass, caching.
 
 ## Accessibility
 
@@ -258,18 +290,18 @@ appears instead of a stand-in. Map data © OpenStreetMap contributors (ODbL).
 
 ## Testing
 
-`pytest` — **403 tests**, fully offline (mock model, `respx` for HTTP):
+`pytest` — **418 tests**, fully offline (mock model, `respx` for HTTP):
 
 | File | What it covers |
 |---|---|
 | `test_rules.py` (62) | Table-driven cases for every rule family and their boundaries |
-| `test_validators.py` (75) | Budget always ≤ total after fixing, rounding, dates, caps, no amounts or wrong place kinds in prose |
+| `test_validators.py` (77) | Budget always ≤ total after fixing, rounding, dates, caps, no amounts or wrong place kinds in prose |
 | `test_llm.py` (40) | Free-model enforcement, cost check, empty reply → next model in the chain → fallback, cache, deadline, injection stays data |
 | `test_choices.py` (39) | **I don't want cake, already have a poojari, cook at home, add a photographer, skip invites**, cascades, validation of model operations, booked stops, moments, parser phrasings, temples, invite clean-up |
 | `test_contrast.py` (38) | WCAG AA contrast for text colours in both themes |
 | `test_intake.py` (35) | Parsing, one question at a time, blocks, *What I understood*, first insights |
 | `test_api.py` (33) | chat → plan → adjust, 409 blocks, 413, 422, 429, security headers, `.ics`, rules-parser fallback |
-| `test_places.py` (31) | Invented place ids rejected, empty Overpass, Openverse parsing and caching, place-first photo order, Foursquare skip and matching |
+| `test_places.py` (44) | Invented place ids rejected, empty Overpass, **Overpass down → Nominatim places used** (venues and *Around the venue*), **both down → honest empty state**, **circuit breaker** skips a dead instance and retries it after the cool-down, the 8 s budget, Nominatim requests spaced out, the same place from two sources kept once, host allow list, Openverse parsing and caching, place-first photo order, Foursquare skip and matching |
 | `test_guidance.py` (24) | The choice line: the model's question kept only when safe (one question, an "or", no amounts or numbers, only real alternatives), the rules' fallback for every stop and alternative |
 | `test_location.py` (9) | India-only geocoding, reverse lookup rounded and uncached, POST-only, position never sent to the model |
 | `test_area_picker.py` (9) | *Which Meerpet?*: mocked Nominatim with the real Meerpet hits gives two options (mandal, district, pincode) and no venue search; a single clear area gives no picker and no second lookup; clinics and buildings filtered out; a district isn't a second choice beside its city; far namesakes ignored; the pick is the search centre; CSP allows OSM tiles only |
@@ -284,7 +316,8 @@ Hindi must fit; the download must be a real PNG; the photo upload must make no n
 **the totals match across screens** at every step, then every screen at phone width; the whole flow again
 in dark mode; edge states, *I don't want cake* end to end, *Use my location* with a granted browser
 position, reduced motion; the **"Which Meerpet?" picker** in the chat and on Details, then *Pin on map* (tap and arrow keys, tiles stubbed so the run makes no tile requests), with the journey's "Searching around" naming the pin; then the **guidance** in both themes: exactly one primary action named by the
-guide line on every screen, the tour on the first visit and not the second, *?* replaying it, the choice
+guide line on every screen, the tour on the first visit and not the second (its arrow on *Looks good*, the
+ring tight round the buttons, the scrim, *Tour 2/3*), *?* replaying it, the choice
 line, *You are here*, the hint after waiting, *Plan the rest*, every **More** action (skip, already have,
 write my own, remove) with keyboard checks, and empty states; asserts no page or console errors;
 optionally runs axe-core. Mock model by default or the real one (`--live`). `WP_E2E_ONLY=guided` (or `picker`)
@@ -299,7 +332,8 @@ runs just that part.
   venue. Small venues rarely have their own photo: then you see labelled *similar vibe* photos or the
   "no photo" card. Openverse's anonymous quota is small (20/min, 200/day), so results are cached.
 - Free models can be slow or busy; replies are validated, retried down the model chain and fall back to
-  the rules. A first plan for a new area can take ~30–60 s (Overpass + model).
+  the rules. A first plan for a new area can take ~30–60 s (places + model). When Overpass is down,
+  the Nominatim fallback takes ~15–30 s for a new area (one request a second), then is cached for a day.
 - No free, key-less image generator was reliable enough for an *AI background* on the invite or an
   "Imagine it" preview, so the card uses hand-drawn templates. Hindi and Telugu render with the
   device's system fonts (the bundled fonts are Latin subsets).
