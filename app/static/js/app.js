@@ -7,6 +7,7 @@ import { chatView, startDemo, welcomeView } from './intake.js';
 import { inviteView } from './invite.js';
 import { journeyView, sheetView } from './journey.js';
 import { discardDetailEdits, load, resetAll, state } from './store.js';
+import { afterRender, initTours, startTour } from './tour.js';
 import { cancelTimers, go, onRender, ROUTES, stopThinking } from './ui.js';
 
 const NAV = [['chat', 'Details'], ['journey', 'Journey'], ['day', 'Event day'], ['plan', 'My plan'], ['invite', 'Invite']];
@@ -106,6 +107,13 @@ function render(opts = {}) {
   if (want) target = FOCUS[want] ? FOCUS[want]() : document.getElementById(want);
   if (!target && before) target = document.getElementById(before);
   if (target) target.focus({ preventScroll: !routeChanged && want !== 'stop' });
+  afterRender();
+}
+
+/** "?": replay this screen's tour (or point at its next step). The options sheet closes first. */
+function help() {
+  if (state.sheet) { state.sheet = false; render({ focus: null }); }
+  startTour(state.route);
 }
 
 // ------------------------------------------------------------------ boot
@@ -135,6 +143,7 @@ async function boot() {
     if (!saved) setTheme(e.matches ? 'dark' : 'light', false);
   });
   $('#logo').addEventListener('click', () => go('welcome'));
+  $('#help').addEventListener('click', help);
   window.addEventListener('hashchange', fromHash);
   window.addEventListener('popstate', fromHash);
   window.addEventListener('online', () => { state.online = true; render({ focus: null }); });
@@ -145,7 +154,8 @@ async function boot() {
   if (demo === 'offline') state.demo.offline = true;
   if (demo === 'nophoto') state.demo.nophoto = true;
   if (params.get('reset') === '1') resetAll();
-  if (params.has('reset') || demo) history.replaceState(null, '', location.pathname + location.hash);
+  initTours({ demo: !!demo, asked: params.get('tour') === '1', reset: params.get('reset') === '1' });
+  if (params.has('reset') || params.has('tour') || demo) history.replaceState(null, '', location.pathname + location.hash);
 
   const hash = (location.hash || '').replace('#', '');
   if (ROUTES.includes(hash)) state.route = hash;

@@ -469,6 +469,97 @@ def edges(r: Run) -> None:
 
 
 
+def tour_clear_of_target(p: Page, where: str) -> None:
+    """The popover sits beside the highlighted target and never overlaps it."""
+    gap = p.evaluate("""() => { const a = document.getElementById('tour').getBoundingClientRect(),
+        b = document.querySelector('.tour-on').getBoundingClientRect();
+        return Math.max(b.top - a.bottom, a.top - b.bottom, b.left - a.right, a.left - b.right); }""")
+    assert gap >= 0, f"{where}: the tour covers its target by {-gap}px"
+
+
+def both_widths(r: Run, name: str, full: bool = False) -> None:
+    """One screenshot at laptop width and one at phone width, of the screen as it is now."""
+    p = r.page
+    r.shot(name, full=full)
+    p.set_viewport_size({"width": 390, "height": 844})
+    p.wait_for_timeout(400)
+    r.shot(name + "-390", full=full)
+    p.set_viewport_size({"width": 1280, "height": 900})
+    p.wait_for_timeout(300)
+
+
+def guided(r: Run, dark: bool) -> None:
+    """v3 guidance: the tour, the next step, the choice question, "you are here", the hint, the hurry
+    button and the More menu. Takes the per-item screenshots in the current theme."""
+    p = r.page
+    sfx = "-dark" if dark else ""
+    r.step("guidance" + (" (dark)" if dark else ""))
+    p.goto(BASE + "/?reset=1&tour=1")
+    if dark:
+        p.evaluate("localStorage.setItem('waypoint:theme', 'dark')")
+        p.reload()
+    p.click("#view button >> text=Aditya's 22nd birthday")
+    expect(p.locator("#prop-h")).to_be_visible(timeout=160000)
+
+    r.step("tour: appears on the first visit, three steps beside their targets")
+    tour = p.locator("#tour")
+    expect(tour).to_be_visible(timeout=5000)
+    expect(tour).to_have_attribute("role", "dialog")
+    expect(p.locator("#tour-next")).to_be_focused()
+    expect(tour).to_contain_text("1 of 3")
+    tour_clear_of_target(p, "tour step 1")
+    both_widths(r, "v3-item2-tour-path" + sfx)
+    p.keyboard.press("Tab")
+    p.keyboard.press("Tab")
+    p.keyboard.press("Tab")
+    assert p.evaluate("document.getElementById('tour').contains(document.activeElement)"), "focus must stay in the tour"
+    p.click("#tour-next")
+    expect(tour).to_contain_text("2 of 3")
+    expect(p.locator(".tour-on")).to_have_count(1)
+    tour_clear_of_target(p, "tour step 2")
+    both_widths(r, "v3-item2-tour-actions" + sfx)
+    p.click("#tour-back")
+    expect(tour).to_contain_text("1 of 3")
+    p.keyboard.press("ArrowRight")
+    p.keyboard.press("ArrowRight")
+    expect(tour).to_contain_text("3 of 3")
+    tour_clear_of_target(p, "tour step 3")
+    both_widths(r, "v3-item2-tour-budget" + sfx)
+    p.keyboard.press("Escape")
+    expect(tour).to_have_count(0)
+
+    r.step("tour: not shown on the second visit; ? replays it")
+    p.reload()
+    expect(p.locator("#prop-h")).to_be_visible(timeout=20000)
+    p.wait_for_timeout(1500)
+    expect(tour).to_have_count(0)
+    p.click("#help")
+    expect(tour).to_be_visible()
+    expect(tour).to_contain_text("1 of 3")
+    p.click("#tour-skip")
+    expect(tour).to_have_count(0)
+    expect(p.locator("#help")).to_be_focused()
+
+    r.step("tour: a short one on My plan and Invite, and ? points at the next step elsewhere")
+    p.click("nav >> text=My plan")
+    expect(tour).to_be_visible(timeout=5000)
+    expect(tour).to_contain_text("1 of 2")
+    tour_clear_of_target(p, "plan tour")
+    both_widths(r, "v3-item2-tour-plan" + sfx)
+    p.keyboard.press("Escape")
+    p.click("nav >> text=Invite")
+    expect(tour).to_be_visible(timeout=8000)
+    p.keyboard.press("Escape")
+    p.click("nav >> text=Party day")
+    p.wait_for_timeout(1000)
+    expect(tour).to_have_count(0)
+    p.click("#help")
+    expect(tour).to_contain_text("Your next step")
+    expect(tour).to_contain_text("Open my plan")
+    p.keyboard.press("Escape")
+    p.click("nav >> text=Journey")
+
+
 def run_axe(browser, axe_path: Path, shots: Path) -> list:
     """axe-core on each screen; the CSP is bypassed only to inject the checker."""
     ctx = browser.new_context(bypass_csp=True, viewport={"width": 1280, "height": 900})
@@ -522,11 +613,16 @@ def main() -> int:
                 ctx.grant_permissions(["clipboard-read", "clipboard-write"], origin=BASE)
                 r = Run(ctx.new_page(), shots)
                 r.n = 50 if dark else 0
+                only = os.getenv("WP_E2E_ONLY", "")  # e.g. "guided" while working on one part
                 try:
-                    flow(r, dark)
-                    mobile(r, dark)
-                    if not dark:
-                        edges(r)
+                    if only in ("", "flow"):
+                        flow(r, dark)
+                        expect(r.page.locator("#tour")).to_have_count(0)  # automated runs: no tour unless asked
+                        mobile(r, dark)
+                        if not dark:
+                            edges(r)
+                    if only in ("", "guided"):
+                        guided(r, dark)  # last: it asks for tours, which then stay on for this session
                 except Exception as exc:  # report and keep going so the summary is complete
                     failures.append(f"{'dark' if dark else 'light'} flow: {exc}")
                     r.shot("failure")
