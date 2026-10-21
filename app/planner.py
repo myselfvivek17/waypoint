@@ -22,8 +22,8 @@ from .places import Place, PlaceSet
 from .rules import RulesResult, inr
 from .schemas import (PRIVATE, Block, Day, DayItem, Mode, DraftOption, DraftPlan, DraftStop, Option, PhotoHint, Plan, Profile,
                       Ripple, Source, Stop, Strict, Task)
-from .validators import (CAPS, cap_list, clamp_due, clip, drop_money, drop_wrong_kind, fit_budget, fix_option_kinds,
-                         line_total, sentences, to_int)
+from .validators import (CAPS, cap_list, clamp_due, clean_ask, clip, drop_money, drop_wrong_kind, fit_budget,
+                         fix_option_kinds, line_total, sentences, to_int)
 
 log = logging.getLogger("waypoint.planner")
 
@@ -58,12 +58,14 @@ you may use a bakery's place_id for the cake. Never invent the name of a busines
 describe the option generically. Personalise names and ideas to who the event is for and what they love,
 and respect every must-have in the rules. reason: at most 20 words. why: at most 40 words, naming the
 rule or the person it comes from. photo_query: 2-4 plain words to search photos of the idea.
+ask (pick only): one short, warm question under 14 words that offers the pick and what the alternatives
+would bring, with "or" between the two, e.g. "Want this café? Or I can show cheaper ones." No amounts.
 Also write "days": the event-day run-sheet with 4 to 6 items (weddings: up to 3 functions), and
 "invite": a warm WhatsApp invite under 70 words with the real date and area, no placeholders.
 
 JSON shape:
 {"stops": [{"key": "venue", "pick": {"name": "", "price": 0, "place_id": "", "reason": "", "why": "",
- "photo_query": "", "outdoor": false}, "options": [{"kind": "Cheaper", "name": "", "price": 0,
+ "photo_query": "", "outdoor": false, "ask": ""}, "options": [{"kind": "Cheaper", "name": "", "price": 0,
  "place_id": "", "reason": "", "outdoor": false, "photo_query": ""}]}],
  "days": [{"label": "", "title": "", "items": [{"time": "6:00 PM", "title": "", "note": "",
  "art": "arrive|games|cake|dinner|music|ritual"}]}],
@@ -220,7 +222,18 @@ def build_stop(ds: DraftStop, fb: DraftStop, key: str, label: str, later: set[st
     stop = Stop(key=key, label=label, rule=r.stop_rule(key, p), nophoto_msg=NO_PHOTO.get(key, ""),
                 rec=rec, options=options)
     fix_option_kinds(stop, p.guests or 1)
+    set_asks(stop, ds.pick.ask)
     return stop
+
+
+def set_asks(stop: Stop, model_ask: str = "") -> None:
+    """End every proposal with its choice in plain words: the model's line for the pick when it
+    passes validation, otherwise (and for the alternatives) the rules' line."""
+    kinds = [o.kind for o in stop.options]
+    stop.rec.ask = (clean_ask(model_ask, set(kinds)) if kinds else "") or \
+        templates.choice_line(stop.key, stop.label, stop.rec.place_kind, kinds)
+    for o in stop.options:
+        o.ask = templates.choice_line(stop.key, stop.label, o.place_kind, kinds, recommended=False)
 
 
 def make_tasks(stops: list[Stop], p: Profile, r: RulesResult, now: dt.date) -> list[Task]:

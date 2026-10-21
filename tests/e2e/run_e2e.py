@@ -558,6 +558,20 @@ def guided(r: Run, dark: bool) -> None:
     expect(tour).to_contain_text("Open my plan")
     p.keyboard.press("Escape")
     p.click("nav >> text=Journey")
+    expect(p.locator("#prop-h")).to_be_visible()
+
+    r.step("the proposal ends with its choice in plain words, answered by the two buttons")
+    ask = p.locator("#ask-q")
+    text = ask.inner_text()
+    assert text.startswith("Want ") and "? Or I can show " in text, text
+    expect(p.locator("#ok-btn")).to_have_attribute("aria-describedby", "ask-q")
+    ask.scroll_into_view_if_needed()
+    p.evaluate("window.scrollBy(0, 160)")
+    both_widths(r, "v3-item3-choice-line" + sfx)
+    p.click("#opt-btn")
+    p.locator("#sheet .alt button:not([disabled])").first.click()
+    expect(ask).to_contain_text("Happy with ")
+    expect(ask).to_contain_text("the other options again")
 
 
 def run_axe(browser, axe_path: Path, shots: Path) -> list:

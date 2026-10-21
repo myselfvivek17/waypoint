@@ -65,6 +65,30 @@ def is_veg(p: Profile) -> bool:
     return bool(re.search(r"\bveg|jain|satvik|sattvic|no onion", low)) and not re.search(r"non[- ]?veg", low)
 
 
+# The choice line that ends a proposal when the model gave none (or one that failed validation).
+ASK_NOUN = {"theme": "this theme", "food": "this menu", "cake": "this cake", "invites": "these invites",
+            "day": "this run-sheet", "music": "this music", "puja": "this plan for the puja", "sound": "this setup"}
+VENUE_NOUN = {"cafe": "this café", "restaurant": "this restaurant", "banquet_hall": "this hall",
+              "community_centre": "this hall", "conference_centre": "this hall", "events_venue": "this venue",
+              "park": "this park", "garden": "this garden", "hotel": "this hotel", "resort": "this resort"}
+OFFER = {"Cheaper": "cheaper ones", "Closer": "closer ones", "Different vibe": "a different vibe"}
+
+
+def choice_line(key: str, label: str, place_kind: str | None, kinds: list[str], recommended: bool = True) -> str:
+    """The proposal's question in plain words; its two answers are the two buttons.
+
+    "Want this café? Or I can show cheaper ones." -> Looks good / Show options.
+    """
+    noun = VENUE_NOUN.get(place_kind or "", f"this {label.lower()}") if key == "venue" \
+        else ASK_NOUN.get(key, f"this {label.lower()}")
+    if not recommended:
+        return f"Happy with {noun}? Or I can show you the other options again."
+    offers = [OFFER[k] for k in dict.fromkeys(kinds) if k in OFFER][:2]
+    if not offers:
+        return f"Want {noun}? Or tell me what you would change."
+    return f"Want {noun}? Or I can show {' or '.join(offers)}."
+
+
 def _r100(n: float) -> int:
     return int(round(n / 100.0)) * 100
 

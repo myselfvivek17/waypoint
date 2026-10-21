@@ -86,7 +86,7 @@ function openStop(i) {
   update({ j: Object.assign({}, state.j, { stopIdx: i, pin: null }), slide: 0, why: false, change: false, changeMsg: '', sheet: false },
     { focus: 'stop' });
   const m = stopsModel(state), x = m[i];
-  if (x) announce(`Stop ${i + 1}, ${x.label}: ${x.item.name}, ${inr(x.price)}.`);
+  if (x) announce(`Stop ${i + 1}, ${x.label}: ${x.item.name}, ${inr(x.price)}.` + (x.status === 'open' ? ' ' + askLine(x) : ''));
 }
 
 function lookGood(m) {
@@ -97,7 +97,8 @@ function lookGood(m) {
   update({ slide: 0, why: false, change: false, sheet: false }, { focus: next >= m.length ? 'finale' : 'stop' });
   const after = stopsModel(state);
   announce(next >= after.length ? 'Every stop is decided.'
-    : `${cur.label} confirmed. Stop ${next + 1}, ${after[next].label}: ${after[next].item.name}, ${inr(after[next].price)}.`);
+    : `${cur.label} confirmed. Stop ${next + 1}, ${after[next].label}: ${after[next].item.name}, ${inr(after[next].price)}.`
+      + (after[next].status === 'open' ? ' ' + askLine(after[next]) : ''));
 }
 
 function pick(stop, o) {
@@ -576,6 +577,11 @@ function photoBlock(cur) {
         ph.relation === 'place' ? 'This place' : ph.relation === 'similar' ? 'Similar vibe' : 'Idea'))))) : null);
 }
 
+/** The proposal's question in plain words; its two answers are the two buttons below it. */
+function askLine(cur) {
+  return cur.item.ask || 'Happy with this one? Or I can show you the other options.';
+}
+
 function proposal(m, idx) {
   if (m[idx].status !== 'open') return statusCard(m, idx);
   const cur = m[idx], it = cur.item, st = cur.s, p = state.plan.profile, guests = p.guests || 0;
@@ -599,8 +605,9 @@ function proposal(m, idx) {
       h('p', { class: 'pprice' }, inr(cur.price), unit ? h('span', null, unit) : null),
       it.cap && it.cap < guests ? h('p', { class: 'err' }, `Fits about ${it.cap}, fewer than your ${guests} guests.`) : null,
       h('p', { class: 'preason' }, it.reason),
+      h('p', { class: 'askq disp', id: 'ask-q' }, askLine(cur)),
       h('div', { class: 'pact' },
-        primary({ id: 'ok-btn', onClick: () => lookGood(m) }, cur.decided ? 'Keep and continue' : 'Looks good'),
+        primary({ id: 'ok-btn', 'aria-describedby': 'ask-q', onClick: () => lookGood(m) }, cur.decided ? 'Keep and continue' : 'Looks good'),
         h('button', { class: 'btn', id: 'opt-btn', type: 'button', disabled: !alts.length,
           onClick: () => update({ sheet: true, changeMsg: '' }, { focus: 'sheet' }) }, 'Show options'),
         h('button', { class: 'btn', type: 'button', 'aria-expanded': String(state.change), 'aria-controls': 'chg',

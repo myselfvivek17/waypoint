@@ -134,6 +134,7 @@ class Option(BaseModel):
     outdoor: bool = False
     reason: str = ""
     why: str = ""
+    ask: str = ""  # the choice in plain words: "Want this café? Or I can show cheaper ones."
     place_id: str | None = None
     place_kind: str | None = None  # the OSM kind of a real place (cafe, banquet_hall, …)
     where: str | None = None
@@ -259,6 +260,7 @@ class DraftOption(Lenient):
     place_id: Text = ""
     reason: Text = ""
     why: Text = ""
+    ask: Text = ""
     outdoor: Flag = False
     photo_query: Text = ""
     ripple: DraftRipple | None = None

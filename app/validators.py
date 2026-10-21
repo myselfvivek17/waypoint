@@ -16,7 +16,7 @@ from .schemas import Stop
 T = TypeVar("T")
 
 CAPS = {"name": 80, "reason": 240, "why": 400, "note": 200, "title": 80, "time": 12,
-        "invite": 700, "reply": 300, "chip": 60, "label": 40, "query": 80}
+        "invite": 700, "reply": 300, "chip": 60, "label": 40, "query": 80, "ask": 110}
 
 _CTRL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 _WS = re.compile(r"[ \t]+")
@@ -47,6 +47,25 @@ def drop_money(text: str) -> str:
     """Remove sentences that quote amounts. Prices are shown from the numbers, which code keeps
     right; an amount inside prose goes stale as soon as the budget or a choice changes."""
     return " ".join(s for s in sentences(text) if not _MONEY.search(s))
+
+
+ASK_OFFERS = (("cheap", "Cheaper"), ("closer", "Closer"), ("vibe", "Different vibe"))
+
+
+def clean_ask(text: str, kinds: set[str]) -> str:
+    """The model's question that ends a proposal, or "" when it can't be shown as it is.
+
+    It must be one short question with an "or" (its two answers are the two buttons), quote no
+    amounts or numbers (they go stale), and offer only alternatives the stop really has.
+    """
+    t = clip(text, CAPS["ask"])
+    low = t.lower()
+    if (not t or t.endswith("…") or "?" not in t or not re.search(r"\bor\b", low) or re.search(r"\d|[<>{}\[\]]", t)
+            or _MONEY.search(t) or len(t.split()) > 18):
+        return ""
+    if any(word in low and kind not in kinds for word, kind in ASK_OFFERS):
+        return ""
+    return t
 
 
 def drop_wrong_kind(text: str, label: str) -> str:
