@@ -496,6 +496,14 @@ def needs(p: Profile) -> tuple[list[ChecklistItem], list[Insight]]:
     if nonveg in ids:
         items = [c for c in items if c.id != pureveg]
     insights = [Insight(id=f"need-{c.id}", family="needs", level="info", title=c.text, why=c.why) for c in items]
+    low = p.food.lower()
+    meat = re.search(r"(?<!\bno )(?<!\bwithout )(?<!\bnot )\b(chicken|mutton|lamb|fish|prawns?|meat|beef|pork|keema)\b", low)
+    plant = re.search(r"\b(vegan|pure[- ]?veg|vegetarian|jain|satvik|sattvic)\b", low)
+    if meat and plant and not re.search(r"non[- ]?veg|\band\b|\bsome\b|\bfew\b|\bguests?\b", low.replace(plant[0], "")):
+        # "vegan but chicken biryani": say it, never pick one silently
+        insights.insert(0, Insight(id="need-conflict", family="needs", level="warn", title="Check the food",
+                                   why=f"“{plant[0]}” and “{meat[0]}” don't go together. I planned it {plant[0]}; if some "
+                                       f"guests eat {meat[0]}, change the food on Details to “veg and non-veg”."))
     return items, insights
 
 

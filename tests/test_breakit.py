@@ -384,3 +384,25 @@ def test_an_unknown_area_is_not_called_an_outage(answer, note):
         r = client.post("/api/plan", json={"profile": {**BASE, "area": "Paris, France"}})
     assert r.status_code == 200
     assert any(note in n for n in r.json()["notes"]), r.json()["notes"]
+
+
+@pytest.mark.parametrize("food, conflict", [
+    ("vegan but chicken biryani", True), ("Pure veg. Chicken biryani!", True), ("Veg + 2 Jain guests", False),
+    ("veg and chicken for some guests", False), ("pure veg, no chicken please", False), ("Jain, no egg", False),
+    ("chicken biryani", False), ("Veg and non-veg", False),
+])
+def test_contradictory_food_is_said_not_silently_picked(food, conflict):
+    """B27: "vegan but chicken biryani" planned a veg thali and never mentioned the chicken."""
+    from app import rules
+    from app.schemas import Profile
+    _, insights = rules.needs(Profile(type="birthday", food=food))
+    hit = [i for i in insights if i.id == "need-conflict"]
+    assert bool(hit) == conflict, (food, [i.why for i in hit])
+    if hit:
+        assert hit[0].level == "warn" and "Details" in hit[0].why
+
+
+def test_the_food_contradiction_is_among_the_first_insights():
+    r = client.post("/api/chat", json={"message": "vegan but chicken biryani", "asked": "food",
+                                       "profile": {**BASE, "food": ""}})
+    assert r.json()["insights"][0]["title"] == "Check the food"

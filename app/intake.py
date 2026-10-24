@@ -401,7 +401,7 @@ def first_insights(p: Profile, today: dt.date, limit: int = 3) -> list[Insight]:
     """The rules' first reading of what is known (budget band, timing, season), most useful first."""
     r = rules.evaluate(p, today)
     order = {"budget": 0, "timing": 1, "season": 2, "size": 3, "needs": 4}
-    return sorted(r.insights, key=lambda i: order[i.family])[:limit]
+    return sorted(r.insights, key=lambda i: (i.id != "need-conflict", order[i.family]))[:limit]  # a contradiction first
 
 
 def _filled(p: Profile, f: str) -> bool:
