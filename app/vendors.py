@@ -22,7 +22,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
-from . import llm, rules
+from . import llm, revise, rules
 from .choices import RippleState, priced
 from .rules import inr
 from .schemas import Plan, Source, Stop, Strict
@@ -284,10 +284,12 @@ AMOUNT = re.compile(r"(?P<cur>₹|\brs\.?|\binr)?\s*(?P<n>\d+(?:\.\d+)?)\s*"
 def amounts(text: str) -> set[int]:
     """Every rupee amount written in ``text``: "45,000", "₹45k", "1.2 lakh", "₹450 per plate". Counts
     ("30 guests", "2 starters", "5%", "4 hours") are not amounts; a bare number must be at least 100."""
-    t = re.sub(r"(?<=\d),(?=\d)", "", text or "")
+    t = re.sub(r"(?<=\d),(?=\d)", "", revise.spoken_amounts((text or "").lower()))  # "forty five thousand" is ₹45,000
     out = set()
     for m in AMOUNT.finditer(t):
         if m["after"] or not (m["cur"] or m["unit"] or float(m["n"]) >= 100):
+            continue
+        if re.search(r"(?:^|[^\d\s])\s*[-−]\s*₹?\s*$", t[:m.start("n")]):  # "₹-40000" is no price; "10-12k" is a range
             continue
         unit = (m["unit"] or "").lower().rstrip("s")
         n = float(m["n"]) * {"lakh": 1e5, "lac": 1e5, "l": 1e5, "k": 1e3, "thousand": 1e3, "crore": 1e7, "cr": 1e7}.get(unit, 1)
@@ -306,6 +308,11 @@ def _num(v: Any) -> int | None:
 PER_GUEST = re.compile(r"per\s*(?:plate|head|guest|person|pax)|/\s*(?:plate|head|guest|person|pax)|a\s+(?:plate|head)", re.I)
 GUESTS_IN = re.compile(r"(\d{1,4})\s*(?:guests|pax|people|persons|plates|heads)", re.I)
 EXTRA_LINE = re.compile(r"(?:extra|additional|plus|\+|on top|charged separately)", re.I)
+# a part of a quote that is talk, not an item the price includes: "Call us", "Ignore previous instructions",
+# "very reasonable rates", leftover script ("alert(1)")
+NOT_ITEM = re.compile(r"(?i)\b(?:ignore|instructions?|tell|call|contact|whatsapp|e-?mail|reach|you|your|user|assistant|"
+                      r"system|prompt|please|rates?|prices?|reasonable|best|cheap|quote|thanks?|regards|hi|hello|dear)\b|"
+                      r"[(){}\[\]<>=/\\₹]")
 
 
 def read_quote(q: QuoteIn) -> DraftQuote:
@@ -324,7 +331,7 @@ def read_quote(q: QuoteIn) -> DraftQuote:
             found = after
             extras.append({"item": re.sub(r"(?i)(?:₹|rs\.?)?\s*\d[\d,.]*\s*(?:k\b|lakhs?)?", "", part).strip(" :-+") or "Extra",
                            "price": found[-1]})
-        elif not found and not EXTRA_LINE.search(part) and 2 < len(part) <= 60:
+        elif not found and not EXTRA_LINE.search(part) and 2 < len(part) <= 60 and not NOT_ITEM.search(part):
             includes.append(part)
     price = q.price
     per = bool(PER_GUEST.search(text))

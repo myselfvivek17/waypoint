@@ -20,6 +20,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.gzip import GZipMiddleware
 from pydantic import BaseModel, Field
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -147,8 +148,11 @@ async def invalid(_: Request, exc: RequestValidationError) -> JSONResponse:
 
 
 @app.exception_handler(HTTPException)
-async def http_error(_: Request, exc: HTTPException) -> JSONResponse:
-    return JSONResponse({"error": str(exc.detail)}, status_code=exc.status_code, headers=exc.headers)
+@app.exception_handler(StarletteHTTPException)  # routing's own 404 / 405 get the same friendly shape
+async def http_error(_: Request, exc: StarletteHTTPException) -> JSONResponse:
+    words = {404: "Not found.", 405: "That method isn't allowed here."}
+    detail = words.get(exc.status_code, str(exc.detail)) if exc.detail in ("Not Found", "Method Not Allowed") else str(exc.detail)
+    return JSONResponse({"error": detail}, status_code=exc.status_code, headers=exc.headers)
 
 
 @app.exception_handler(Exception)
