@@ -393,11 +393,11 @@ appears instead of a stand-in. Map data © OpenStreetMap contributors (ODbL).
 
 ## Testing
 
-`pytest` — **723 tests**, fully offline (mock model, `respx` for HTTP):
+`pytest` — **724 tests**, fully offline (mock model, `respx` for HTTP):
 
 | File | What it covers |
 |---|---|
-| `test_breakit.py` (203) | **Adversarial QA (v4b)**, one test per finding: intake answers like 0 / 100000 / -5 guests, -5000, "fifty thousand", today, next Sunday, 29 Feb, Hinglish/Hindi/Telugu head counts, and *why* a question comes back; lavish budgets (₹10 crore) and one guest; revisions that must be refused with a reason; a live model returning empty, invalid, NaN, huge, extra-field or injected replies; quote talk vs included items, amounts in words, ranges flagged; every endpoint answering bad bodies with a 4xx, 413 for oversized and chunked bodies, 429 after a burst; trade-off edges and their applied totals |
+| `test_breakit.py` (204) | **Adversarial QA (v4b)**, one test per finding: intake answers like 0 / 100000 / -5 guests, -5000, "fifty thousand", today, next Sunday, 29 Feb, Hinglish/Hindi/Telugu head counts, and *why* a question comes back; lavish budgets (₹10 crore) and one guest; revisions that must be refused with a reason; a live model returning empty, invalid, NaN, huge, extra-field or injected replies; quote talk vs included items, amounts in words, ranges flagged; every endpoint answering bad bodies with a 4xx, 413 for oversized and chunked bodies, 429 after a burst; trade-off edges and their applied totals; a slow free-model chain stopping within its time budget |
 | `test_revise.py` (50) | The **parser table** (28 phrasings: 35k, ₹1.5 lakh, "thirty-two thousand", cut 20%, +50 people, 2 weeks earlier, on 1 Nov…), the explainer's sentence as **one diff** with per-guest, days to go and newly urgent tasks, impossible → ways out re-run with the revision, decided / booked / quoted stops kept, a broken venue-capacity rule overriding a decision, date move recomputing every deadline, Details edits = the same revision, the model asked only about unread clauses |
 | `test_prices.py` (19) | Where a price comes from (estimate / your number / quoted / booked), the labels, availability claims dropped, the diff marking estimates, quotes and booked amounts in the totals |
 | `test_vendors.py` (14) | Questions cover the event and every must-have, model questions checked, quote reading and maths, invented amounts and items rejected, **prompt injection stays data and no markup is echoed**, length limits, a chosen quote flowing into the budget (LLM mocked) |
