@@ -176,8 +176,8 @@ def _candidates(t: str):
 
 
 WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
-RELATIVE = re.compile(r"\bin\s+(?P<n>\d{1,3}|a|an|one|two|three|four|five|six)\s+(?P<u>days?|weeks?|months?)\b|"
-                      r"\b(?P<n2>\d{1,3}|a|an|one|two|three|four|five|six)\s+(?P<u2>days?|weeks?|months?)\s+from\s+(?:now|today)\b")
+RELATIVE = re.compile(r"\bin\s+(?P<n>\d{1,3}|a|an|one|two|three|four|five|six)\s+(?P<u>days?|weeks?|months?|years?)\b|"
+                      r"\b(?P<n2>\d{1,3}|a|an|one|two|three|four|five|six)\s+(?P<u2>days?|weeks?|months?|years?)\s+from\s+(?:now|today)\b")
 SMALL = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6}
 
 
@@ -225,6 +225,8 @@ def parse_date(text: str, today: dt.date) -> dt.date | None:
     if m := RELATIVE.search(t):
         n_raw, unit = m["n"] or m["n2"], m["u"] or m["u2"]
         n = int(n_raw) if n_raw.isdigit() else SMALL[n_raw]
+        if unit.startswith("year"):
+            unit, n = "month", n * 12
         if unit.startswith("month"):
             y, mo = divmod(today.month - 1 + n, 12)
             for day in (today.day, 30, 29, 28):

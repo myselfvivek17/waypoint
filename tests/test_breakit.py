@@ -60,7 +60,7 @@ def test_budget_answers(text, budget, why):
 @pytest.mark.parametrize("text, date", [
     ("today", "2026-10-20"), ("tomorrow", "2026-10-21"), ("next Sunday", "2026-10-25"), ("Saturday", "2026-10-24"),
     ("on sat", "2026-10-24"), ("29 Feb", "2028-02-29"), ("in 3 weeks", "2026-11-10"), ("2 weeks from now", "2026-11-03"),
-    ("15 Nov 2029", "2029-11-15"), ("asap", None), ("yesterday", None),
+    ("15 Nov 2029", "2029-11-15"), ("in 3 years", "2029-10-20"), ("asap", None), ("yesterday", None),
 ])
 def test_date_answers(text, date):
     """B04: "today", "next Sunday", "Saturday" and "29 Feb" were not read; the question repeated silently."""
