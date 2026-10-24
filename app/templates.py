@@ -247,7 +247,7 @@ def cake_stop(p: Profile, r: RulesResult, bakeries: list[Place]) -> DraftStop:
         name=f"{motif} cake, {kg:g} kg {egg}".strip(), price=_r100(line), place_id=shop.id if shop else "",
         reason=f"{kg:g} kg gives each of {p.guests or 'your'} guests a generous slice."
                + (" Eggless, so everyone can have some." if egg else ""),
-        why="About 1 kg for every 12 guests.", photo_query="birthday cake"),
+        why=f"About 1 kg for every 12 guests (≈{kg:g} kg for {p.guests} guests).", photo_query="birthday cake"),
         options=[DraftOption(kind="Cheaper", name=f"Pineapple {egg}cake, {max(1.0, kg - .5):g} kg",
                              price=_r100(line * .7), reason="Plain and classic.", photo_query="pineapple cake",
                              place_id=bakeries[1].id if len(bakeries) > 1 else ""),
