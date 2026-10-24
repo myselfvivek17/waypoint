@@ -190,7 +190,7 @@ async def questions(inp: QuestionsIn) -> QuestionsOut:
                       "area": f["area"], "food": p.food, "access": p.access},
             "stop": s.label, "current_idea": f["choice"], "rough_estimate": f["estimate"], "must_haves": must}
     res = await llm.ask("vendor-questions", QUESTION_INSTRUCTIONS, data, QDraft, fallback=lambda: QDraft(questions=base),
-                        max_tokens=500, timeout=15)
+                        max_tokens=1500, timeout=25)
     qs = []
     for q in res.value.questions[:10]:
         q = drop_claims(clean(q, 160))
@@ -413,7 +413,8 @@ async def compare(inp: QuotesIn) -> QuotesOut:
     data = {"stop": s.label, "guests": guests,
             "quotes": [{"index": i, "vendor": q.vendor, "typed_price": q.price, "text": q.text} for i, q in enumerate(inp.quotes)]}
     res = await llm.ask("vendor-quotes", QUOTE_INSTRUCTIONS, data, QDrafts,
-                        fallback=lambda: QDrafts(quotes=[f.model_dump() for f in fallbacks]), max_tokens=900, timeout=20)
+                        fallback=lambda: QDrafts(quotes=[f.model_dump() for f in fallbacks]),
+                        max_tokens=1800, timeout=30)
     by_index: dict[int, DraftQuote] = {}
     for i, raw in enumerate(res.value.quotes[:3]):
         try:

@@ -57,10 +57,14 @@ DOWN = re.compile(r"\b(?:fewer|less|lower|minus|remove[ds]?|drop(?:ped)?|cut|red
                   r"shr[iu]nk|trim(?:med)?|can'?t come|cancell?ed|not coming|smaller)\b")
 ABSOLUTE_LEAD = re.compile(r"\b(?:to|is|are|now|for|of|be|just|only|total|expecting|expect)\s*$")
 
-MONEY = re.compile(r"budget|spend|₹|\binr\b|\d\s*(?:k|lakhs?|lacs?|l|crores?|cr|thousand)\b|%|percent|per cent")
+BUDGET_WORD = re.compile(r"\b(?:budget|money|funds|spend(?:ing)?)\b")
+SPOKEN_AMOUNT = re.compile(rf"\b(?P<n>(?:{TENS}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|"
+                           rf"hundred)(?:\s+and\s+a\s+half)?)\s+(?P<u>thousand|lakhs?|lacs?|crores?)\b")
+MONEY = re.compile(r"budget|money|funds|spend|₹|\binr\b|\d\s*(?:k|lakhs?|lacs?|l|crores?|cr|thousand)\b|%|percent|per cent")
 MONEY_TEXT = re.compile(r"(?:₹\s*)?\d+(?:\.\d+)?\s*(?:k|lakhs?|lacs?|l|crores?|cr|thousand)?\b")
 FILLER = re.compile(r"(?i)^(?:actually|ok(?:ay)?|so|oh|also|and|but|then|update|change|hey|hi|well)\b[\s,:-]*")
 VAGUE_SHARE = 10  # "a bit" less, in percent: said out loud whenever it is used
+VAGUE_NOTE = "You didn't say how much the budget"
 
 
 def number(word: str) -> float | None:
@@ -109,7 +113,7 @@ def clauses(text: str) -> list[str]:
     t = re.sub(r"(?<=\d),(?=\d)", "", text.strip())
     t = re.sub(r"(?i)\b(?:rs\.?|inr)\s*(?=\d)", "₹", t)
     out = []
-    for part in re.split(r"(?i)[,;]|\s(?:and|but|also|then|plus(?!\s*\d)|while)\s|\.(?:\s|$)", t):
+    for part in re.split(r"(?i)[,;]|\s(?:and(?!\s+a\s+half)|but|also|then|plus(?!\s*\d)|while)\s|\.(?:\s|$)", t):
         part = part.strip(" .!?")
         while FILLER.match(part) and FILLER.sub("", part, count=1) != part:
             part = FILLER.sub("", part, count=1).strip()
@@ -208,24 +212,39 @@ def read_guests(c: str, p: Profile, rev: Revision) -> str:
     return c.replace(m.group(0), " ")
 
 
+def spoken_amounts(c: str) -> str:
+    """'thirty-two thousand' -> '₹32000', 'two and a half lakh' -> '₹250000': said in words, still money."""
+    def num(m: re.Match) -> str:
+        half = "and a half" in m["n"]
+        n = number(re.sub(r"\s+and\s+a\s+half", "", m["n"]))
+        if n is None:
+            return m.group(0)
+        unit = {"thousand": 1e3, "lakh": 1e5, "lac": 1e5, "crore": 1e7}[m["u"].rstrip("s")]
+        return f"₹{int((n + (.5 if half else 0)) * unit)}"
+    return SPOKEN_AMOUNT.sub(num, c)
+
+
 def read_budget(c: str, p: Profile, rev: Revision) -> str:
-    """'budget down to ₹35k', '₹1.5 lakh', 'cut 20%', 'budget up by 10k', 'budget decreased a bit', 'half'."""
+    """'budget down to ₹35k', '₹1.5 lakh', 'cut 20%', 'budget up by 10k', 'budget decreased a bit', 'half',
+    'thirty-two thousand', 'the money is tighter'."""
     old = p.budget or 0
+    c = spoken_amounts(c)
+    said_budget = bool(BUDGET_WORD.search(c))
     if not MONEY.search(c):
         return c
     up, down = bool(UP.search(c)), bool(DOWN.search(c))
     pct = re.search(r"(\d+(?:\.\d+)?)\s*(?:%|percent|per cent)", c)
-    if pct and old and (up != down or "budget" in c):
+    if pct and old and (up != down or said_budget):
         n = min(90.0, float(pct[1]))
         rise = up and not down
         new = int(round(old * (1 + n / 100 if rise else 1 - n / 100) / 100) * 100)
         rev.budget, rev.said["budget"] = new, f"budget {'up' if rise else 'down'} {n:g}% ({inr(old)} → {inr(new)})"
         return c.replace(pct[0], " ")
-    if old and "budget" in c and re.search(r"\bhal(?:f|ve[sd]?)\b", c):
+    if old and said_budget and re.search(r"\bhal(?:f|ve[sd]?)\b", c):
         new = int(round(old / 2 / 100) * 100)
         rev.budget, rev.said["budget"] = new, f"half the budget ({inr(old)} → {inr(new)})"
         return " "
-    amount = parse_money(c, loose="budget" in c)
+    amount = parse_money(c, loose=said_budget)
     if amount is not None and amount >= 500:
         by = re.search(r"\bby\b", c) and not re.search(r"\b(?:to|is|now|of)\s*₹?\s*\d", c)
         if by and down and not up:
@@ -236,12 +255,14 @@ def read_budget(c: str, p: Profile, rev: Revision) -> str:
             new, word = amount, f"budget {'down to' if amount < old else 'up to' if amount > old else 'stays at'} {inr(amount)}"
         new = max(1000, min(500_000_000, new))
         rev.budget, rev.said["budget"] = new, word
+        rev.assumed = [a for a in rev.assumed if not a.startswith(VAGUE_NOTE)]  # an exact amount replaces a guess
         return MONEY_TEXT.sub(" ", c, count=1)
-    if old and "budget" in c and up != down:
+    if old and said_budget and (up != down or re.search(r"\btight(?:er)?\b", c)):
+        up = up and not down
         new = int(round(old * (1 + VAGUE_SHARE / 100 if up else 1 - VAGUE_SHARE / 100) / 100) * 100)
         rev.budget = new
         rev.said["budget"] = f"budget {'up' if up else 'down'} about {VAGUE_SHARE}% ({inr(old)} → {inr(new)})"
-        rev.assumed.append(f"You didn't say how much the budget {'went up' if up else 'dropped'}, so I took "
+        rev.assumed.append(f"{VAGUE_NOTE} {'went up' if up else 'dropped'}, so I took "
                            f"{VAGUE_SHARE}%: {inr(new)}. Tell me the amount if it's different.")
         return " "
     return c

@@ -823,6 +823,42 @@ def run_axe(browser, axe_path: Path, shots: Path) -> list:
                                 [(n["target"], n.get("failureSummary", "")[-120:]) for n in v["nodes"][:4]]))
             if close_it:
                 page.click(close_it)
+
+        def audit(name: str) -> None:
+            page.wait_for_timeout(700)
+            page.add_script_tag(content=src)
+            res = page.evaluate("axe.run(document, {resultTypes: ['violations']})")
+            for v in res["violations"]:
+                results.append((theme, name, v["impact"], v["id"], len(v["nodes"]), v["help"],
+                                [(n["target"], n.get("failureSummary", "")[-120:]) for n in v["nodes"][:4]]))
+        # v4: the revision diff with its ways out, the trade-off step, the vendor questions and quotes
+        page.evaluate("location.hash = 'plan'")
+        page.wait_for_timeout(600)
+        page.fill("#adj-in", EXPLAINER)
+        page.click("#view button >> text=Show me")
+        page.wait_for_selector(".ways-out", timeout=40000)
+        audit("revision-diff")
+        page.click("#view button >> text=Keep as it is")
+        page.fill("#adj-in", "20 more guests")
+        page.click("#view button >> text=Show me")
+        page.click("#trade-btn")
+        page.wait_for_selector(".tradeo", timeout=30000)
+        page.click("#pr-food")
+        audit("tradeoffs")
+        page.click("#view button >> text=Keep as it is")
+        page.evaluate("location.hash = 'journey'")
+        page.wait_for_timeout(600)
+        page.click("#more-stop")
+        page.click("#ch-vendor")
+        page.wait_for_selector(".vqs li", timeout=30000)
+        audit("vendor-questions")
+        page.click("#vt-quotes")
+        for i, (name, price, text) in enumerate((QUOTE_A, QUOTE_B)):
+            page.fill(f"#vq-{i}-n", name)
+            page.fill(f"#vq-{i}-t", text)
+        page.click("#vq-go")
+        page.wait_for_selector(".vtable tbody tr", timeout=40000)
+        audit("vendor-quotes")
     ctx.close()
     return results
 
@@ -1117,6 +1153,53 @@ def v4_vendors(r: Run, dark: bool) -> None:
     assert_no_null_text(p)
 
 
+def v4_mobile(r: Run, dark: bool) -> None:
+    """The v4 screens at 390 px: the revision diff, the trade-off step and the quote table fit the phone."""
+    p = r.page
+    suffix = "-dark" if dark else ""
+    r.step("v4 at 390 px: revision diff, trade-offs, vendor quotes" + (" (dark)" if dark else ""))
+    p.set_viewport_size({"width": 390, "height": 844})
+
+    def fits(where: str) -> None:
+        w = p.evaluate("document.documentElement.scrollWidth")
+        assert w <= 391, f"{where}: the page scrolls sideways ({w}px)"
+    try:
+        open_sample(p, dark)
+        p.click("nav >> text=My plan")
+        p.fill("#adj-in", EXPLAINER)
+        p.click("#view button >> text=Show me")
+        expect(p.locator(".ways-out")).to_be_visible(timeout=40000)
+        fits("revision diff")
+        p.locator("#diff-h").scroll_into_view_if_needed()
+        r.shot("v4-mobile-revision" + suffix)
+        p.click("#view button >> text=Keep as it is")
+        p.fill("#adj-in", "20 more guests")
+        p.click("#view button >> text=Show me")
+        p.click("#trade-btn")
+        expect(p.locator(".tradeo").first).to_be_visible(timeout=30000)
+        fits("trade-offs")
+        p.locator(".trade").scroll_into_view_if_needed()
+        r.shot("v4-mobile-tradeoffs" + suffix, full=False)
+        p.click("#view button >> text=Keep as it is")
+        p.click("nav >> text=Journey")
+        more(p, "#ch-vendor")
+        expect(p.locator(".vqs li").first).to_be_visible(timeout=30000)
+        p.click("#vt-quotes")
+        for i, (name, price, text) in enumerate((QUOTE_A, QUOTE_B)):
+            p.fill(f"#vq-{i}-n", name)
+            if price:
+                p.fill(f"#vq-{i}-p", price)
+            p.fill(f"#vq-{i}-t", text)
+        p.click("#vq-go")
+        expect(p.locator(".vtable tbody tr")).to_have_count(2, timeout=40000)
+        fits("vendor quotes")  # the table scrolls inside its own box, not the page
+        p.locator(".vres").scroll_into_view_if_needed()
+        r.shot("v4-mobile-quotes" + suffix, full=False)
+        assert_no_null_text(p)
+    finally:
+        p.set_viewport_size({"width": 1280, "height": 900})
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--live", action="store_true", help="use the real model from .env")
@@ -1152,6 +1235,7 @@ def main() -> int:
                         v4_revision(r, dark)
                         v4_tradeoffs(r, dark)
                         v4_vendors(r, dark)
+                        v4_mobile(r, dark)
                     if only in ("", "picker"):
                         area_picker(r, dark)
                     if only in ("", "guided"):

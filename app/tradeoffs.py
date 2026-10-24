@@ -240,7 +240,7 @@ async def tradeoffs(inp: TradeIn, now: dt.date) -> TradeOut:
         return out
     data = {"event": {"type": inp.plan.profile.type, "guests": inp.plan.profile.guests},
             "options": [{"title": o.title, "keeps": o.keeps, "gives_up": o.gives_up} for o in opts]}
-    res = await llm.ask("tradeoffs", INSTRUCTIONS, data, Lines, fallback=Lines, max_tokens=300, timeout=12)
+    res = await llm.ask("tradeoffs", INSTRUCTIONS, data, Lines, fallback=Lines, max_tokens=1200, timeout=20)
     lines = [clip(drop_claims(drop_money(str(x))), 160) for x in res.value.lines[:len(opts)]]
     if res.source == "ai" and len(lines) == len(opts) and all(lines):
         for o, line in zip(opts, lines):

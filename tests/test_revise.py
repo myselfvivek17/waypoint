@@ -47,6 +47,9 @@ EXPLAINER = "50 more guests, budget down to ₹35k and the party is two weeks ea
     ("the date is 2026-11-08", None, None, "2026-11-08"),
     ("for 60 guests on 8 Nov with ₹60k", 60, 60000, "2026-11-08"),
     ("2 weeks later and 20% more budget", None, 48000, "2026-11-29"),
+    ("we're now expecting about seventy people and the money is tighter, maybe thirty-two thousand", 70, 32000, None),
+    ("budget is two and a half lakh", None, 250000, None),
+    ("the money is tighter", None, 36000, None),
 ])
 def test_parser_table(text, guests, budget, date):
     rev = revise.read(text, P, TODAY)
@@ -58,6 +61,11 @@ def test_parser_table(text, guests, budget, date):
 def test_other_requests_are_left_for_the_other_readers(text):
     rev = revise.read(text, P, TODAY)
     assert not rev.found and rev.rest == [text]
+
+
+def test_an_exact_amount_replaces_a_vague_one():
+    rev = revise.read("the money is tighter, maybe thirty-two thousand", P, TODAY)
+    assert rev.budget == 32000 and rev.assumed == []
 
 
 def test_vague_amounts_are_assumed_out_loud_and_past_dates_refused():

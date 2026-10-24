@@ -1023,7 +1023,7 @@ async def _revision(inp: AdjustIn, rev: revise.Revision, now: dt.date) -> Adjust
             unread.append(clause)
     if unread:
         res = await llm.ask("adjust", INSTRUCTIONS, _model_data(inp, "; ".join(unread)), OpsDraft,
-                            fallback=lambda: OpsDraft(), max_tokens=400, timeout=15)
+                            fallback=lambda: OpsDraft(), max_tokens=1000, timeout=20)
         extra = [o for o in validate_ops(res.value.ops, plan) if o.op not in PLAN_FIELDS]  # code already read those
         if extra:
             ops, source, unread = ops + extra, res.source, []
@@ -1044,7 +1044,7 @@ async def adjust(inp: AdjustIn, now: dt.date) -> AdjustOut:
     if rev.found:
         return await _revision(inp, rev, now)
     res = await llm.ask("adjust", INSTRUCTIONS, _model_data(inp), OpsDraft,
-                        fallback=lambda: OpsDraft(), max_tokens=400, timeout=15)
+                        fallback=lambda: OpsDraft(), max_tokens=1000, timeout=20)
     ops, source = validate_ops(res.value.ops, plan), res.source
     if not ops:
         ops = parse_ops(inp.request, plan, now)
