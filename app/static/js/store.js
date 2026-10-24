@@ -100,6 +100,26 @@ export function load() {
   }
 }
 
+/** Another tab saved (or cleared) the plan: take its state, so this tab never writes an older copy over
+    it. Returns what happened, for the caller to say. A preview open here was built on the older plan. */
+export function syncFrom(raw) {
+  const keep = { online: state.online, demo: state.demo, serverToday: state.serverToday, llmMode: state.llmMode };
+  if (raw == null) {
+    Object.assign(state, initial(), keep);
+    return 'cleared';
+  }
+  let saved = null;
+  try { saved = JSON.parse(raw); } catch (e) { return 'ignored'; }
+  if (!obj(saved)) return 'ignored';
+  const route = state.route;
+  Object.assign(state, { diff: null, trade: null, vendor: null, sheet: false, menu: null, adjSuggest: null, adjMsg: '' });
+  restore(saved);
+  state.route = route === 'welcome' || state.plan || !['journey', 'day', 'plan', 'invite'].includes(route) ? route : 'welcome';
+  return 'synced';
+}
+
+export const STORAGE_KEY = KEY;
+
 export function save() {
   try {
     const out = {};

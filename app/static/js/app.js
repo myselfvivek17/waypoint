@@ -6,7 +6,7 @@ import { $, clear, h } from './dom.js';
 import { chatView, startDemo, welcomeView } from './intake.js';
 import { inviteView } from './invite.js';
 import { journeyView, sheetView } from './journey.js';
-import { discardDetailEdits, load, resetAll, state } from './store.js';
+import { discardDetailEdits, load, resetAll, state, STORAGE_KEY, syncFrom } from './store.js';
 import { afterRender, initTours, startTour } from './tour.js';
 import { cancelTimers, go, onRender, ROUTES, say, stopThinking } from './ui.js';
 
@@ -146,6 +146,14 @@ async function boot() {
   $('#help').addEventListener('click', help);
   window.addEventListener('hashchange', fromHash);
   window.addEventListener('popstate', fromHash);
+  window.addEventListener('storage', (e) => {  // the same plan open in another tab changed
+    if (e.key !== STORAGE_KEY || e.storageArea !== localStorage) return;
+    const what = syncFrom(e.newValue);
+    if (what === 'ignored') return;
+    stopThinking();
+    render({ focus: null });
+    say(what === 'cleared' ? 'The plan was cleared in another tab.' : 'Updated with the changes from your other tab.');
+  });
   window.addEventListener('online', () => { state.online = true; render({ focus: null }); });
   window.addEventListener('offline', () => { state.online = false; render({ focus: null }); });
 
