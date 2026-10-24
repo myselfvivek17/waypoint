@@ -387,16 +387,19 @@ def budget_block(p: Profile) -> Block | None:
     assert p.guests and p.budget is not None
     floor = PER_GUEST[p.type][city_tier(p.area)][0]
     per = p.budget // p.guests
-    fit = max(4, p.budget // floor)
+    fit = p.budget // floor
     raise_to = -(-p.guests * floor // 100) * 100
+    # "invite fewer" only when the budget still feeds a small gathering at the floor; "Keep ₹1,
+    # invite 4: about ₹0 a head" is no way out
+    fewer = [Way(title=f"Keep {inr(p.budget)}, invite {fit}",
+                 detail=f"Close friends and family only: about {inr(p.budget // fit)} a head.",
+                 apply={"guests": fit})] if fit >= 4 else []
     return Block(
         type="budget",
-        title=f"{inr(p.budget)} for {p.guests} guests is {inr(per)} a head.",
-        body="That won't stretch to food, a space and decor. Here are three ways to make it work:",
-        ways=[
-            Way(title=f"Keep {inr(p.budget)}, invite {fit}",
-                detail=f"Close friends and family only: about {inr(p.budget // fit)} a head.",
-                apply={"guests": fit}),
+        title=f"{inr(p.budget)} for {p.guests} guests is {inr(per)} a head." if per >= 10
+        else f"{inr(p.budget)} won't cover {p.guests} guest{'s' if p.guests != 1 else ''}.",
+        body=f"That won't stretch to food, a space and decor. Here are {'three' if fewer else 'two'} ways to make it work:",
+        ways=fewer + [
             Way(title=f"Keep {p.guests} guests, raise to {inr(raise_to)}",
                 detail=f"{inr(floor)} a head is the floor for food, a space and basic decor here.",
                 apply={"budget": raise_to}),

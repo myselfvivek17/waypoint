@@ -135,9 +135,16 @@ def detect_type(text: str) -> EventType | None:
     return None
 
 
+NEGATIVE = re.compile(r"(?:^|[\s(:=])[-−–]\s*(?:₹|rs\.?|inr)?\s*\d|\bminus\s+\d", re.I)
+
+
 def parse_money(text: str, loose: bool = False) -> int | None:
-    """"₹40k", "40,000", "1.5 lakh", "2 cr" -> rupees. Bare numbers only when ``loose``."""
-    t = text.lower().replace(",", "")
+    """"₹40k", "40,000", "1.5 lakh", "2 cr", "fifty thousand" -> rupees. Bare numbers only when
+    ``loose``. A negative amount ("-5000") is not money anyone can spend: None, never ₹5,000."""
+    from .revise import spoken_amounts  # revise builds on this module
+    if NEGATIVE.search(text):
+        return None
+    t = spoken_amounts(text.lower()).replace(",", "")
     m = re.search(r"(?:₹|rs\.?|inr)\s*([\d.]+)\s*(lakhs?|lacs?|l|k|thousand|crores?|cr)?\b", t) or \
         re.search(r"([\d.]+)\s*(lakhs?|lacs?|k|thousand|crores?|cr)\b", t)
     if not m and loose:
@@ -168,36 +175,115 @@ def _candidates(t: str):
         yield int(m[1]), int(m[2]), (y + 2000 if y is not None and y < 100 else y)
 
 
-def parse_date(text: str, today: dt.date) -> dt.date | None:
-    """"15 Nov", "Nov 15th 2026", "2026-11-15", "15/11" -> date.
+WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+RELATIVE = re.compile(r"\bin\s+(?P<n>\d{1,3}|a|an|one|two|three|four|five|six)\s+(?P<u>days?|weeks?|months?)\b|"
+                      r"\b(?P<n2>\d{1,3}|a|an|one|two|three|four|five|six)\s+(?P<u2>days?|weeks?|months?)\s+from\s+(?:now|today)\b")
+SMALL = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6}
 
-    With no year, the next such date on or after today. An explicit past year is kept
-    (the rules engine turns it into a "date in the past" block).
+
+def _next_feb29(today: dt.date, year: int | None) -> dt.date | None:
+    """29 Feb with no year: the next leap year's, said with its year by whoever shows it."""
+    for y in ([year] if year else range(today.year, today.year + 8)):
+        try:
+            when = dt.date(y, 2, 29)
+        except ValueError:
+            continue
+        if year or when >= today:
+            return when
+    return None
+
+
+def parse_date(text: str, today: dt.date) -> dt.date | None:
+    """"15 Nov", "Nov 15th 2026", "2026-11-15", "15/11", "today", "tomorrow", "next Sunday",
+    "this Saturday", "in 3 weeks" -> date.
+
+    With no year, the next such date on or after today ("29 Feb": the next leap year). An explicit
+    past year is kept (the rules engine turns it into a "date in the past" block).
     """
     t = text.lower()
     for d, mo, y in _candidates(t):
+        if (d, mo) == (29, 2):
+            when = _next_feb29(today, y)
+            if when is not None:
+                return when
+            continue
         try:
             when = dt.date(y or today.year, mo, d)
         except ValueError:
             continue
         if y is None and when < today:
-            try:
-                when = when.replace(year=today.year + 1)
-            except ValueError:  # 29 Feb
-                continue
+            when = when.replace(year=today.year + 1)
         return when
-    if "tomorrow" in t:
+    if re.search(r"\b(?:today|tonight)\b", t):
+        return today
+    if re.search(r"\b(?:tomorrow|tmrw)\b", t):
         return today + dt.timedelta(days=1)
+    if m := re.search(r"\b(?:(next|this|coming)\s+)?(mon|tue|wed|thu|fri|sat|sun)(?:day|s|sday|nesday|rsday|urday)?\b", t):
+        if m[1] or re.search(r"\bon\s+" + m[2], t) or t.strip().startswith(m[2]):
+            ahead = (WEEKDAYS.index(m[2]) - today.weekday()) % 7 or 7  # the coming one, never today
+            return today + dt.timedelta(days=ahead)
+    if m := RELATIVE.search(t):
+        n_raw, unit = m["n"] or m["n2"], m["u"] or m["u2"]
+        n = int(n_raw) if n_raw.isdigit() else SMALL[n_raw]
+        if unit.startswith("month"):
+            y, mo = divmod(today.month - 1 + n, 12)
+            for day in (today.day, 30, 29, 28):
+                try:
+                    return dt.date(today.year + y, mo + 1, day)
+                except ValueError:
+                    continue
+        return today + dt.timedelta(days=n * (7 if unit.startswith("week") else 1))
     return None
 
 
-def parse_guests(text: str, asked: bool) -> int | None:
+GUEST_WORDS = r"(?:people|guests?|pax|persons?|friends|members|adults|folks|log|logon|lok|मेहमान|लोग|మంది|అతిథులు)"
+MAX_GUESTS = 5000
+
+
+def read_guests(text: str, asked: bool) -> int | None:
+    """The head count as written, even when out of range (0, 100000, -5): ``parse_guests`` checks it.
+    "30 people", "1 guest", "25 log" (Hinglish), "40 लोग", "30 మంది"; a bare number or a number word
+    ("thirty") only when the question was the guest count."""
+    from .revise import number
     t = text.lower().replace(",", "")
-    m = re.search(r"(\d{1,4})\s*(?:people|guests|pax|persons|friends|members|adults|folks)", t)
+    m = re.search(rf"(?<![\d.])(-?\s*\d+)\s*{GUEST_WORDS}(?!\w)", t)
     if not m and asked:
-        m = re.search(r"(\d{1,4})", t)
-    n = int(m.group(1)) if m else None
-    return n if n and 1 <= n <= 5000 else None
+        m = re.search(r"(?<![\d.])(-?\s*\d+)(?![\d.]*\s*(?:k|lakh|%))", t)
+        if not m:
+            n = number(re.sub(r"^(?:about|around|roughly|maybe|just|only)\s+", "", t.strip(" .!")))
+            if n is None and t.strip(" .!") in ("zero", "none", "nobody", "no one"):
+                n = 0
+            return int(n) if n is not None else None
+    return int(m.group(1).replace(" ", "")) if m else None
+
+
+def parse_guests(text: str, asked: bool) -> int | None:
+    n = read_guests(text, asked)
+    return n if n is not None and 1 <= n <= MAX_GUESTS else None
+
+
+def unread(asked: str | None, text: str) -> str:
+    """When the answer to a guests, budget or date question couldn't be used: one plain line on why and
+    what would work, so the same question never just comes back with no explanation."""
+    shown = clip(" ".join(text.split()), 40)
+    if asked == "guests":
+        n = read_guests(text, True)
+        if n is not None and n < 1:
+            return "A plan needs at least 1 guest."
+        if n is not None and n > MAX_GUESTS:
+            return f"I can plan for up to {MAX_GUESTS:,} guests; {n:,} is more than that."
+        return f"I couldn't find a number of guests in “{shown}”. Type a number, like 30."
+    if asked == "budget":
+        if NEGATIVE.search(text):
+            return "A budget can't be below zero."
+        if re.fullmatch(r"\s*(?:₹|rs\.?|inr)?\s*0+\s*", text.lower()):
+            return "A budget of ₹0 can't pay for a celebration."
+        return f"I couldn't read an amount in “{shown}”. Try 40000, ₹40k or 1.5 lakh."
+    if asked == "date":
+        if re.search(r"\byesterday\b|\blast\s+(?:week|month|year|mon|tue|wed|thu|fri|sat|sun)", text.lower()):
+            return "That date has already passed."
+        return f"I couldn't read a date in “{shown}”. Try a day and month, like 15 Nov, or next Saturday."
+    return ""
 
 
 NOT_PLACES = re.compile(r"^(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|mon|tue|wed|thu|fri|sat|sun|"
@@ -392,6 +478,8 @@ async def chat_turn(inp: ChatIn, today: dt.date) -> ChatOut:
     if ask and draft.ask == ask and draft.reply and not inp.edit:
         text = clip(draft.reply, CAPS["reply"])
         chips = _clean_chips(draft.chips) or chips
+    if ask and ask == inp.asked and inp.message.strip() and not block and not _filled(merged, ask):
+        text = f"{unread(ask, inp.message)} {QUESTIONS[ask][0]}".strip()  # say why the question is back
     remaining = len(missing_req) + min(len(optional_left), max(0, MAX_TURNS - turns - len(missing_req)))
     return ChatOut(done=False, reply=text, ask=ask, placeholder=ph, chips=chips, profile=merged,
                    block=block, remaining=max(1, remaining), source=result_source, **understood)
