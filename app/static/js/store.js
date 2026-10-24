@@ -26,7 +26,7 @@ function initial() {
     demo: {}, serverToday: null, llmMode: null, photos: {}, nearby: {},
     locBusy: false, locMsg: '', areaCheck: null,
     choiceForm: null, choiceNote: '', choiceCost: '', choiceMsg: '', confirmRemove: null, addOpen: false, addDraft: '',
-    dayForm: null, dayDraft: '', dayAlts: null, adjSuggest: null, menu: null, modesFor: null, paidFor: null, paidDraft: '',
+    dayForm: null, dayDraft: '', dayAlts: null, adjSuggest: null, menu: null, modesFor: null, paidFor: null, paidDraft: '', trade: null,
   };
 }
 

@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parent
 if os.getenv("WP_NO_DOTENV") != "1":
     load_dotenv(ROOT.parent / ".env")
 
-from . import choices, intake, invites, llm, places, planner  # noqa: E402  (env must be loaded first)
+from . import choices, intake, invites, llm, places, planner, tradeoffs  # noqa: E402  (env must be loaded first)
 from .schemas import PhotoHint, Plan, Profile, Strict  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -203,6 +203,13 @@ async def apply_ops(body: choices.ApplyIn, request: Request) -> choices.AdjustOu
     """Operations from the UI (a stop's way of doing it, add or remove a stop), no model involved."""
     limiter.check(request, "adjust")
     return await choices.apply(body, planner.today())
+
+
+@app.post("/api/tradeoffs", response_model=tradeoffs.TradeOut)
+async def trade(body: tradeoffs.TradeIn, request: Request) -> tradeoffs.TradeOut:
+    """Over budget: two or three rebalanced options for the user's priorities (maths in code)."""
+    limiter.check(request, "adjust")
+    return await tradeoffs.tradeoffs(body, planner.today())
 
 
 @app.post("/api/invite", response_model=invites.InviteOut)

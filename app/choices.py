@@ -31,12 +31,12 @@ from .validators import CAPS, clip, line_total, to_int
 
 log = logging.getLogger("waypoint.choices")
 
-STOP_OPS = {"remove_stop", "skip_stop", "restore_stop", "have", "own", "set_mode", "cheaper"}
+STOP_OPS = {"remove_stop", "skip_stop", "restore_stop", "have", "own", "set_mode", "cheaper", "choose"}
 ITEM_OPS = {"remove_item", "skip_item", "have_item", "own_item", "move_item"}
 PLAN_OPS = {"add_stop", "add_item", "cut_budget", "set_budget", "add_guests", "remove_guests", "set_guests",
             "outdoors", "indoors", "move_date"}
 OPS = STOP_OPS | ITEM_OPS | PLAN_OPS
-MAX_OPS = 8
+MAX_OPS = 12
 MAX_STOPS = 10
 
 INSTRUCTIONS = """
@@ -253,6 +253,8 @@ def validate_ops(raw: list, plan: Plan) -> list[Op]:
             op.stop = s.key
             if op.op == "set_mode" and not any(m.id == op.mode for m in s.modes):
                 continue
+            if op.op == "choose" and not any(o.id == op.item for o in _all(s)):
+                continue
         if op.op in ITEM_OPS:
             it = find_item(plan, op.item or op.text)
             if it is None:
@@ -424,6 +426,7 @@ class Ctx:
     budget_set: bool = False  # the user changed the budget: squeeze undecided stops to fit it
     orig: dict[str, str] = field(default_factory=dict)  # the choices before this change
     touched: set[str] = field(default_factory=set)      # stops already explained
+    picked: set[str] = field(default_factory=set)       # stops the user changed in this same request
     _ps: PlaceSet | None = None
 
     def stop(self, key: str | None) -> Stop | None:
@@ -437,8 +440,8 @@ class Ctx:
         return s.key in self.booked or s.status != "open" or prices.source(s) != "estimate"
 
     def kept(self, s: Stop) -> bool:
-        """Kept as it is unless a rule now breaks it: locked, or decided by the user."""
-        return self.locked(s) or s.key in self.decided
+        """Kept as it is unless a rule now breaks it: locked, decided, or just changed by the user."""
+        return self.locked(s) or s.key in self.decided or s.key in self.picked
 
     def current(self, s: Stop) -> Option:
         return next((o for o in _all(s) if o.id == self.chosen.get(s.key)), s.rec)
@@ -555,7 +558,9 @@ async def apply_op(c: Ctx, op: Op) -> None:
     it = find_item(c.plan, op.item) if op.op in ITEM_OPS else None
     if op.op in STOP_OPS and s is None or op.op in ITEM_OPS and it is None:
         return
-    if op.op in ("remove_stop", "skip_stop", "set_mode", "cheaper") and s.key in c.booked:
+    if op.op in STOP_OPS and s is not None:
+        c.picked.add(s.key)
+    if op.op in ("remove_stop", "skip_stop", "set_mode", "cheaper", "choose") and s.key in c.booked:
         c.notes.append(f"The {s.label.lower()} is already booked, so I left it as it is.")
         return
     match op.op:
@@ -598,6 +603,11 @@ async def apply_op(c: Ctx, op: Op) -> None:
                 c.ripples = _take(s, min(cheaper, key=lambda o: o.price), c.chosen, c.ripples)
             else:
                 c.notes.append(f"This is already the cheapest {s.label.lower()} I have.")
+        case "choose":  # a trade-off picked by the user: this option for this stop
+            o = next(x for x in _all(s) if x.id == op.item)
+            s.status = "open"
+            c.ripples = _take(s, o, c.chosen, c.ripples)
+            c.titles.append(f"{s.label}: {o.name}")
         case "add_stop":
             await add_stop(c, op.name or op.text or "")
         case "remove_item":
@@ -763,7 +773,7 @@ async def _resize(c: Ctx, old: Profile, p: Profile) -> None:
             elif venue.mode and (new := await rebuild(c, venue, venue.mode)) is not None:
                 c.explain.append(f"{cur.name} holds about {cur.cap}, fewer than {c.guests} guests, and no option was big "
                                  f"enough, so I looked again: {new.rec.name}.")
-        elif size_was != size_now and venue.key not in c.decided and venue.mode:
+        elif size_was != size_now and not c.kept(venue) and venue.mode:
             new = await rebuild(c, venue, venue.mode)
             if new is not None:
                 c.explain.append(f"{c.guests} guests need {size_now} rather than {size_was}, so I re-planned the "
@@ -772,7 +782,7 @@ async def _resize(c: Ctx, old: Profile, p: Profile) -> None:
             c.explain.append(f"{c.guests} guests usually need {size_now}. You decided on {cur.name}: check it holds "
                              f"everyone comfortably.")
     cake = c.stop("cake")
-    if cake is not None and old.guests and not c.kept(cake):
+    if cake is not None and old.guests and not c.locked(cake) and cake.key not in c.decided:
         ratio = c.guests / old.guests
         for o in _all(cake):
             o.price = max(100, int(round(o.price * ratio / 100) * 100))

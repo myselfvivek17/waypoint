@@ -165,6 +165,78 @@ export async function reviseFromDetails(fields) {
   announce(`${r.data.title}. ${r.data.note}`);
 }
 
+// ------------------------------------------------------------------ "Where should the money go?"
+
+/** Over budget: open the trade-off step. ``base`` is 'diff' when it rebalances a pending revision. */
+export async function openTrade(base) {
+  update({ trade: { base, prio: [], res: null, busy: true } }, { focus: 'trade-h' });
+  await fetchTrade();
+}
+
+async function fetchTrade() {
+  const t = state.trade, d = state.diff;
+  const body = t.base === 'diff' && d
+    ? planBody({ plan: d.plan, chosen: d.chosen, ripples: d.ripples, priorities: t.prio })
+    : planBody({ priorities: t.prio });
+  update({ trade: Object.assign({}, t, { busy: true }) }, { focus: null });
+  const r = await api.tradeoffs(body);
+  if (!state.trade) return;
+  update({ trade: Object.assign({}, state.trade, { busy: false, res: r.ok ? r.data : null, err: r.ok ? '' : errorText(r) }) },
+    { focus: null });
+  if (r.ok) announce(r.data.options.length ? `${r.data.options.length} ways to fit the budget.` : 'The plan already fits the budget.');
+}
+
+function togglePrio(id) {
+  const t = state.trade;
+  const prio = t.prio.includes(id) ? t.prio.filter((x) => x !== id) : t.prio.concat(id);
+  update({ trade: Object.assign({}, t, { prio, stale: true }) }, { focus: 'pr-' + id });
+}
+
+/** An option becomes a diff like any other change: with the pending revision when there is one. */
+async function useTrade(o) {
+  const t = state.trade, d = state.diff;
+  const ops = t.base === 'diff' && d ? d.ops.concat(o.ops) : o.ops;
+  update({ busy: true });
+  think(`Rebalancing: ${o.title.toLowerCase()}…`);
+  const r = await api.apply(planBody({ ops }));
+  stopThinking();
+  if (!r.ok || !r.data.understood) { update({ busy: false, adjMsg: r.ok ? r.data.note : errorText(r) }, { focus: 'adj-msg' }); return; }
+  update({ busy: false, trade: null, diff: Object.assign({ request: d && t.base === 'diff' ? d.request : o.title }, r.data) }, { focus: 'diff-h' });
+  announce(`${o.title}. ${r.data.note}`);
+}
+
+function tradeView() {
+  const t = state.trade, res = t.res;
+  const close = () => update({ trade: null }, { focus: state.diff ? 'diff-h' : 'adj-in' });
+  return h('section', { class: 'chg trade', 'aria-labelledby': 'trade-h' },
+    h('div', { class: 'chghd' },
+      h('h3', { class: 'disp h2', id: 'trade-h', tabindex: '-1', style: { fontSize: '22px', margin: '0' } }, 'Where should the money go?'),
+      h('button', { class: 'linkb', type: 'button', onClick: close }, 'Close')),
+    res ? h('p', { class: 'lead', style: { margin: '6px 0 0' } },
+      `The plan is ${inr(res.over)} over your ${inr(res.budget)}. Tap what matters most, in order: I protect those and take the money from the rest, instead of cutting everything a little.`) : null,
+    res && res.categories.length ? h('div', { class: 'chips', role: 'group', 'aria-label': 'What matters most, in order' },
+      res.categories.map((c) => {
+        const rank = t.prio.indexOf(c.id);
+        return h('button', { class: 'chip prio', id: 'pr-' + c.id, type: 'button', 'aria-pressed': String(rank >= 0), disabled: t.busy,
+          onClick: () => togglePrio(c.id) }, rank >= 0 ? h('span', { class: 'apn', 'aria-hidden': 'true' }, String(rank + 1)) : null,
+        c.label, rank >= 0 ? h('span', { class: 'sr' }, `, priority ${rank + 1}`) : null);
+      })) : null,
+    t.stale ? h('div', { class: 'pact' }, h('button', { class: 'btn', type: 'button', disabled: t.busy, onClick: () => {
+      state.trade = Object.assign({}, t, { stale: false }); fetchTrade(); } }, 'Update the options')) : null,
+    t.busy ? h('p', { class: 'chgmsg', role: 'status' }, 'Working out the options…') : null,
+    t.err ? h('p', { class: 'err', role: 'alert' }, t.err) : null,
+    res && !res.options.length && !t.busy ? h('p', { class: 'chgmsg' }, res.over ? 'Nothing left that I can change: the rest is booked, quoted or yours. Try fewer guests or a higher budget.'
+      : 'The plan fits the budget.') : null,
+    res && res.options.length ? h('ol', { class: 'tradeopts' }, res.options.map((o, i) => h('li', { class: 'tradeo' },
+      h('p', { class: 'wt' }, o.title, ' ', h('span', { class: 'aitag' + (res.source === 'ai' ? ' ai' : '') }, res.source === 'ai' ? 'Worded by AI · maths by code' : 'Maths by code')),
+      h('p', { class: 'tt2' }, o.line),
+      h('p', { class: 'flab' }, 'Gives up'), h('ul', null, o.gives_up.map((g) => h('li', null, g))),
+      o.keeps.length ? h('p', { class: 'tt2' }, 'Keeps: ' + o.keeps.join(', ').toLowerCase()) : null,
+      h('p', { class: 'tradet' }, `≈ ${inr(o.total)} of ${inr(res.budget)}`, ' · ', o.fits ? `${inr(res.budget - o.total)} to spare` : h('span', { class: 'over' }, 'still over')),
+      i === 0 ? primary({ disabled: state.busy || t.busy, onClick: () => useTrade(o) }, 'Use this', h('span', { class: 'sr' }, ': ' + o.title))
+        : h('button', { class: 'btn', type: 'button', disabled: state.busy || t.busy, onClick: () => useTrade(o) }, 'Use this', h('span', { class: 'sr' }, ': ' + o.title))))) : null);
+}
+
 function applyDiff() {
   const d = state.diff;
   const before = Object.fromEntries(stopsModel(state).map((x) => [x.key, x]));
@@ -255,8 +327,10 @@ function diffView(d) {
       h('ul', null, d.explain.map((t) => h('li', null, t)))) : null,
     blocked ? waysView(d) : null,
     h('div', { class: 'pact' },
-      blocked ? h('button', { class: 'btn', type: 'button', onClick: applyDiff }, 'Apply anyway')
+      blocked || state.trade ? h('button', { class: 'btn', type: 'button', onClick: applyDiff }, blocked ? 'Apply anyway' : 'Apply changes')
         : primary({ onClick: applyDiff }, 'Apply changes'),
+      d.over > 0 && !blocked && !state.trade ? h('button', { class: 'btn', id: 'trade-btn', type: 'button', onClick: () => openTrade('diff') },
+        'Where should the money go?') : null,
       h('button', { class: 'btn', type: 'button', onClick: () => update({ diff: null }, { focus: 'adj-in' }) }, 'Keep as it is')));
 }
 
@@ -271,9 +345,12 @@ export function planView() {
   const allDecided = m.every((x) => x.decided);
   const tick = (id) => { toggleTick(id); update({}, { focus: 'tk-' + id }); };
   // one next step: the diff waiting for a decision, else the next task, else the invitation
-  const step = state.diff ? 'diff' : next ? 'task' : 'invite';
+  const step = state.trade ? 'trade' : state.diff ? 'diff' : next ? 'task' : 'invite';
   const doneWord = next && next.price ? 'Mark as booked' : 'Mark as done';
-  const guideText = step === 'diff' && state.diff.ways && state.diff.ways.length
+  const guideText = step === 'trade' ? (state.trade.res && state.trade.res.options.length
+    ? 'Tap what matters most, then compare the options and tap Use this on the one you like.'
+    : 'Tap what matters most; the options appear here.')
+    : step === 'diff' && state.diff.ways && state.diff.ways.length
     ? `These numbers don't work yet. Pick one of the ${state.diff.ways.length} ways below; the first is the one I would choose.`
     : step === 'diff' ? 'Check the before and after, then tap Apply changes, or Keep as it is.'
     : step === 'task' ? `${late ? `${late} task${late > 1 ? 's are' : ' is'} late. ` : ''}Next up: ${next.text}${next.due ? ` (${next.dueText[0].toLowerCase() + next.dueText.slice(1)})` : ''}. Tap ${doneWord} once it is done.`
@@ -308,6 +385,8 @@ export function planView() {
         h('h2', { class: 'disp h2', id: 'bud-h', style: { marginTop: '0' } }, 'Budget'),
         h('p', { style: { margin: '0 0 8px' } }, h('span', { 'data-budget-line': '' }, budgetLine(b)),
           b.over ? h('span', { class: 'over' }, ` · ${inr(b.total - b.budget)} over`) : null),
+        b.over && !state.diff && !state.trade ? h('button', { class: 'btn', id: 'trade-btn', type: 'button', onClick: () => openTrade('plan') },
+          'Where should the money go?') : null,
         !m.length ? empty('No stops in the budget yet. Add one on the Journey to see where the money goes.') : null,
         h('div', null, m.map((x) => h('div', { class: 'brow', 'data-stop': x.key, 'data-price': x.price },
           h('button', { class: 'linkb', type: 'button', onClick: () => { update({ j: Object.assign({}, state.j, { stopIdx: x.i, view: 'path' }) }, { render: false }); go('journey', { focus: 'stop' }); } },
@@ -329,7 +408,8 @@ export function planView() {
           state.adjMsg ? h('p', { class: 'chgmsg', id: 'adj-msg', role: 'status', tabindex: '-1' }, state.adjMsg) : null,
           state.adjSuggest ? h('div', { class: 'pact' }, h('button', { class: 'btn', type: 'button', disabled: state.busy,
             onClick: () => runSuggestion(state.adjSuggest) }, 'Closest I can do: ' + state.adjSuggest.text)) : null,
-          state.diff ? diffView(state.diff) : null))),
+          state.diff ? diffView(state.diff) : null,
+          state.trade ? tradeView() : null))),
     h('div', { class: 'acts' },
       h('button', { class: 'btn', type: 'button', onClick: () => addCal(rows) }, 'Add deadlines to calendar'),
       h('button', { class: 'btn', type: 'button', onClick: copyInvite }, 'Copy invite'),

@@ -4,6 +4,7 @@ import { api, errorText } from './api.js';
 import { landscape, mapBase, noPhotoIcon, toneArt } from './art.js';
 import { h, inr, s, safeUrl } from './dom.js';
 import { chipDefs } from './intake.js';
+import { openTrade } from './dayplan.js';
 import { allOptions, budgetLine, lineTotal, maxReach, nextIndex, priceSays, priceText, stopsModel, summary } from './model.js';
 import { applyAdjustment, chooseOption, confirmStop, planBody, setStopStatus, state } from './store.js';
 import { moreMenu } from './menu.js';
@@ -469,7 +470,9 @@ function budgetBar(m, idx, reach) {
     h('div', { class: 'budtop' },
       h('span', { 'data-budget-line': '' }, budgetLine(b)),
       h('span', { class: b.over ? 'over' : '' }, b.over ? `Over budget by ${inr(b.total - b.budget)}`
-        : `${inr(b.free)} still free` + (b.freed ? ` (${inr(b.freed)} freed by skipping)` : ''))),
+        : `${inr(b.free)} still free` + (b.freed ? ` (${inr(b.freed)} freed by skipping)` : ''),
+      b.over ? h('button', { class: 'linkb', id: 'trade-link', type: 'button', onClick: () => { update({ diff: null }, { render: false }); go('plan'); openTrade('plan'); } },
+        'Where should the money go?') : null)),
     h('div', { class: 'bar', role: 'group', 'aria-label': `Budget bar: planned ${inr(b.total)} against ${inr(b.budget)}` },
       segs, h('div', { class: 'mark', 'aria-hidden': 'true', style: { left: `calc(${((b.budget / b.denom) * 100).toFixed(2)}% - 2px)` } })),
     h('div', { class: 'legend', 'aria-hidden': 'true' },

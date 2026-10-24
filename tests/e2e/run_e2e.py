@@ -1030,6 +1030,43 @@ def v4_revision(r: Run, dark: bool) -> None:
     assert_no_null_text(p)
 
 
+def v4_tradeoffs(r: Run, dark: bool) -> None:
+    """Item 3: over budget after a revision -> "Where should the money go?" -> priorities -> an option."""
+    p = r.page
+    suffix = "-dark" if dark else ""
+    r.step("trade-offs: rank what matters, pick a rebalanced option, apply" + (" (dark)" if dark else ""))
+    open_sample(p, dark)
+    p.click("#ok-btn")
+    expect(p.locator("#prop-h")).to_be_visible()
+    p.click("nav >> text=My plan")
+    p.fill("#adj-in", "20 more guests")
+    p.click("#view button >> text=Show me")
+    expect(p.locator("#diff-h")).to_contain_text("20 more guests", timeout=40000)
+    expect(p.locator(".chgmsg").first).to_contain_text("over budget")
+    p.click("#trade-btn")
+    expect(p.locator("#trade-h")).to_be_focused()
+    expect(p.locator(".tradeo").first).to_be_visible(timeout=30000)
+    expect(p.locator(".tradeo").first).to_contain_text("Protect food, venue")
+    p.click("#pr-food")
+    p.click("#pr-decor")
+    expect(p.locator("#pr-food .apn")).to_have_text("1")
+    expect(p.locator("#pr-decor")).to_have_attribute("aria-pressed", "true")
+    p.click("#view button >> text=Update the options")
+    expect(p.locator(".tradeo").first).to_contain_text("Protect food, decor", timeout=30000)
+    expect(p.locator(".tradeo").first).to_contain_text("Gives up")
+    assert one_next_step(p, "the trade-off step").startswith("Use this")
+    r.shot("v4-tradeoffs" + suffix)
+    p.locator(".tradeo").first.locator("button").click()
+    expect(p.locator(".trade")).to_have_count(0, timeout=40000)
+    expect(p.locator(".chgmsg").first).to_contain_text("Fits the budget")
+    p.click("#view button >> text=Apply changes")
+    expect(p.locator("#diff-h")).to_have_count(0)
+    line = p.locator("#bud-h + p").inner_text()
+    assert "over" not in line, line
+    check_totals_match(r, "after a trade-off")
+    assert_no_null_text(p)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--live", action="store_true", help="use the real model from .env")
@@ -1063,6 +1100,7 @@ def main() -> int:
                     if only in ("", "v4"):
                         v4_prices(r, dark)
                         v4_revision(r, dark)
+                        v4_tradeoffs(r, dark)
                     if only in ("", "picker"):
                         area_picker(r, dark)
                     if only in ("", "guided"):
