@@ -23,6 +23,19 @@ def clean_text(p: Page, where: str) -> None:
     assert p.locator("h1").count() == 1, f"{where}: {p.locator('h1').count()} h1 elements"
 
 
+def money_agrees(p: Page, when: str) -> None:
+    """On My plan: the task costs add up to the planned total in the budget line, and every bar's amount
+    is a whole rupee figure (no NaN, no ₹-)."""
+    p.click("nav >> text=My plan")
+    line = p.locator("[data-budget-line]").first.inner_text()
+    planned = int(re.sub(r"\D", "", line.split(" of ")[0]))
+    costs = [int(re.sub(r"\D", "", t)) for t in p.locator(".task .tcost").all_inner_texts()]
+    assert sum(costs) == planned, f"{when}: tasks add to {sum(costs)}, the budget line says {planned}"
+    bars = [int(x) for x in p.evaluate("[...document.querySelectorAll('.brow')].map((e) => e.dataset.price)")]
+    assert sum(bars) == planned, f"{when}: the budget bars add to {sum(bars)}, not {planned}"
+    clean_text(p, when)
+
+
 def corrupt_storage(r: E.Run) -> None:
     """B19: any corrupt saved value (edited, half-written, older version) blanked every screen."""
     p = r.page
@@ -180,6 +193,7 @@ def quote_then_revise_then_remove(r: E.Run) -> None:
     expect(p.locator(".vtable tbody tr")).to_have_count(2, timeout=40000)
     p.click("#view button >> text=Choose Annapurna Caterers's quote")
     E.check_totals_match(r, "quote chosen")
+    money_agrees(p, "quote chosen")
     p.fill("#adj-in", "20 more guests")
     p.click("#view button >> text=Show me")
     expect(p.locator(".explain")).to_contain_text("re-quote for 50", timeout=30000)
@@ -187,6 +201,7 @@ def quote_then_revise_then_remove(r: E.Run) -> None:
     p.click("#view button >> text=Apply changes")
     E.check_totals_match(r, "after a revision that kept the quote")
     expect(p.locator("[data-budget-line]").first).to_contain_text(f"Planned {total} of")
+    money_agrees(p, "after the revision")
     p.click("nav >> text=Journey")
     p.click("button.sg >> text=List")
     p.locator(".slist button", has_text="Food").click()
@@ -194,6 +209,7 @@ def quote_then_revise_then_remove(r: E.Run) -> None:
     p.click("#view button >> text=Remove the food")
     expect(p.locator(".node .nl", has_text="Food")).to_have_count(0, timeout=30000)
     E.check_totals_match(r, "after removing the quoted stop")
+    money_agrees(p, "after removing the quoted stop")
     clean_text(p, "plan after removing the quoted stop")
 
 

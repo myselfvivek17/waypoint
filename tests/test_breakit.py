@@ -406,3 +406,43 @@ def test_the_food_contradiction_is_among_the_first_insights():
     r = client.post("/api/chat", json={"message": "vegan but chicken biryani", "asked": "food",
                                        "profile": {**BASE, "food": ""}})
     assert r.json()["insights"][0]["title"] == "Check the food"
+
+
+# ---------------------------------------------------------------- passes worth pinning
+
+def _over(plan: dict) -> dict:
+    out = adjust(plan, "20 more guests")
+    assert out["over"] > 0
+    return out
+
+
+def trade(body: dict) -> dict:
+    r = client.post("/api/tradeoffs", json=body)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_tradeoffs_at_the_edges(plan):
+    """No priorities, every priority, unknown ones, already under budget, one stop, nothing left to change."""
+    o = _over(plan)
+    base = {"plan": o["plan"], "chosen": o["chosen"], "ripples": o["ripples"]}
+    keys = [s["key"] for s in o["plan"]["stops"]]
+    assert trade({**base, "priorities": []})["options"]
+    assert trade({**base, "priorities": ["food", "venue", "decor", "photos", "fun", "nope"][:5]})["options"]
+    assert trade({**base, "booked": keys})["options"] == []
+    assert trade({"plan": plan})["over"] == 0 and trade({"plan": plan})["options"] == []
+    one = {**o["plan"], "stops": [s for s in o["plan"]["stops"] if s["key"] == "food"]}
+    assert trade({"plan": one})["over"] == 0
+    for opt in trade({**base, "priorities": ["food"]})["options"]:  # every option's total is what applying it gives
+        applied = client.post("/api/apply", json={**base, "ops": opt["ops"]}).json()
+        total = next(r["after"] for r in applied["rows"] if r["label"].startswith("Total"))
+        assert total == f"₹{opt['total']:,}", (opt["title"], total)
+
+
+def test_the_model_down_while_planning_still_gives_a_plan(live_llm, no_places):
+    with respx.mock(assert_all_called=False) as m:
+        m.post(llm.API_URL).mock(return_value=httpx.Response(504))
+        r = client.post("/api/plan", json={"profile": BASE})
+    plan = r.json()
+    assert r.status_code == 200 and plan["source"] != "ai" and len(plan["stops"]) >= 5
+    assert all(s["rec"]["price"] > 0 for s in plan["stops"])
