@@ -207,6 +207,8 @@ async function useTrade(o) {
 
 function tradeView() {
   const t = state.trade, res = t.res;
+  // the next step is the first option that fits the budget; one that is "still over" is never the primary
+  const best = res && res.options.length ? Math.max(0, res.options.findIndex((o) => o.fits)) : -1;
   const close = () => update({ trade: null }, { focus: state.diff ? 'diff-h' : 'adj-in' });
   return h('section', { class: 'chg trade', 'aria-labelledby': 'trade-h' },
     h('div', { class: 'chghd' },
@@ -227,13 +229,13 @@ function tradeView() {
     t.err ? h('p', { class: 'err', role: 'alert' }, t.err) : null,
     res && !res.options.length && !t.busy ? h('p', { class: 'chgmsg' }, res.over ? 'Nothing left that I can change: the rest is booked, quoted or yours. Try fewer guests or a higher budget.'
       : 'The plan fits the budget.') : null,
-    res && res.options.length ? h('ol', { class: 'tradeopts' }, res.options.map((o, i) => h('li', { class: 'tradeo' },
+    res && res.options.length ? h('ol', { class: 'tradeopts' }, res.options.map((o, i) => h('li', { class: 'tradeo' + (i === best ? ' best' : '') },
       h('p', { class: 'wt' }, o.title, ' ', h('span', { class: 'aitag' + (res.source === 'ai' ? ' ai' : '') }, res.source === 'ai' ? 'Worded by AI · maths by code' : 'Maths by code')),
       h('p', { class: 'tt2' }, o.line),
       h('p', { class: 'flab' }, 'Gives up'), h('ul', null, o.gives_up.map((g) => h('li', null, g))),
       o.keeps.length ? h('p', { class: 'tt2' }, 'Keeps: ' + o.keeps.join(', ').toLowerCase()) : null,
       h('p', { class: 'tradet' }, `≈ ${inr(o.total)} of ${inr(res.budget)}`, ' · ', o.fits ? `${inr(res.budget - o.total)} to spare` : h('span', { class: 'over' }, 'still over')),
-      i === 0 ? primary({ disabled: state.busy || t.busy, onClick: () => useTrade(o) }, 'Use this', h('span', { class: 'sr' }, ': ' + o.title))
+      i === best ? primary({ disabled: state.busy || t.busy, onClick: () => useTrade(o) }, 'Use this', h('span', { class: 'sr' }, ': ' + o.title))
         : h('button', { class: 'btn', type: 'button', disabled: state.busy || t.busy, onClick: () => useTrade(o) }, 'Use this', h('span', { class: 'sr' }, ': ' + o.title))))) : null);
 }
 

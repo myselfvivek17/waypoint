@@ -514,7 +514,7 @@ body:has(.sheetwrap) #view [data-next]{animation:none}
 .chip.prio .apn{margin-right:8px}
 .tradeopts{list-style:none;padding:0;margin:14px 0 0;display:grid;gap:12px}
 .tradeo{padding:14px 16px;border-radius:16px;border:2px solid var(--line);background:var(--cream)}
-.tradeo:first-child{border-color:var(--mari)}
+.tradeo.best{border-color:var(--mari)}
 .tradeo p{margin:0 0 4px}
 .tradeo ul{margin:0 0 8px;padding-left:20px;font-size:15px}
 .tradet{font-weight:700}

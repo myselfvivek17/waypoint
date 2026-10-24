@@ -340,9 +340,11 @@ def regex_intent(text: str, now: dt.date) -> Op | None:
         return Op(op="cut_budget", amount=20)
     if re.search(r"budget.*(to|of)\s*₹?\s*\d|set budget", t):
         return Op(op="set_budget", amount=parse_money(t, loose=True))
-    if re.search(r"\b(add|invite|more)\b", t) and n:
+    guests_said = re.search(r"\b(?:guests?|people|persons?|pax|friends|relatives|members|adults|kids|children)\b", t)
+    # a number alone is not a head count: "add a DJ for 3 hours" adds no guests
+    if guests_said and re.search(r"\b(add|invite|more)\b", t) and n:
         return Op(op="add_guests", amount=n)
-    if re.search(r"\b(remove|drop|fewer|less|cut|reduce)\b", t) and n:
+    if guests_said and re.search(r"\b(remove|drop|fewer|less|cut|reduce)\b", t) and n:
         return Op(op="remove_guests", amount=n)
     if re.search(r"\b(?:for|plan for|make it)\s+\d+\s+(?:guests|people)", t) and n:
         return Op(op="set_guests", amount=n)
@@ -408,9 +410,11 @@ def _read_modes(raw: str, t: str, plan: Plan, now: dt.date) -> list[Op]:
 
 def _read_add(raw: str, t: str, plan: Plan, now: dt.date) -> list[Op]:
     m = _ADD.search(t)
-    if not m or re.search(r"\d|guest|people|budget", t):
+    # "add 20 guests" and "add ₹5k to the budget" are numbers, not stops; "add a DJ for 3 hours" is a stop
+    if not m or re.search(r"guest|people|friends|budget|₹|\d\s*(?:k|lakhs?)\b|%", t) or re.match(r"\s*\d", t[m.start("x"):]):
         return []
-    return [Op(op="add_stop", name=m["x"].strip())]
+    name = re.sub(r"\s+(?:for|with|at|on|from|by|of|in)(?:\s+(?:a|an|the))?\s*$", "", m["x"].strip())
+    return [Op(op="add_stop", name=name)] if name else []
 
 
 def _read_plan(raw: str, t: str, plan: Plan, now: dt.date) -> list[Op]:
@@ -573,7 +577,7 @@ async def add_stop(c: Ctx, name: str) -> None:
         st.modes, st.mode = [Mode(id=m[0], label=m[1], why=m[5]) for m in rows], rows[0][0]
     at = keys.index("day") if "day" in keys else len(keys)
     c.plan.stops.insert(at, st)
-    c.titles.append(f"Add {label.lower()}")
+    c.titles.append("Add " + " ".join(w if w.isupper() else w.lower() for w in label.split()))  # "Add DJ & music"
 
 
 def drop_from_invite(invite: str, label: str) -> str:

@@ -37,6 +37,9 @@ let photoUrl = null;
 function plan() { return state.plan; }
 
 /** The facts the card and the AI text are written from, all derived from the plan. */
+/** At most n characters (never half an emoji), ending with "…" when cut: the invite API's field limits. */
+const fitTo = (text, n) => { const g = [...String(text || '')]; return g.length <= n ? g.join('') : g.slice(0, n - 1).join('').trimEnd() + '…'; };
+
 export function inviteFacts() {
   const p = plan().profile;
   const venue = stopsModel(state).find((x) => x.key === 'venue');
@@ -45,7 +48,8 @@ export function inviteFacts() {
   const place = !venue || atHome ? '' : venue.status !== 'open' ? (venue.s.note || area)
     : venue.item.place_id ? `${venue.item.name}, ${area}` : area;
   const first = plan().days[0] && plan().days[0].items.find((it) => it.status !== 'skip');
-  return { title: plan().title, type: p.type, date: p.date, time: first ? first.time : '', place, at_home: atHome };
+  // a venue in the user's own words can be 160 characters, a venue name plus area longer still: fit the limits
+  return { title: fitTo(plan().title, 80), type: p.type, date: p.date, time: fitTo(first ? first.time : '', 12), place: fitTo(place, 120), at_home: atHome };
 }
 
 function inv() {
@@ -67,7 +71,7 @@ async function fetchTexts(lang) {
   fetching = lang;
   const s = inv();
   think('Writing three invitations from your plan…');
-  const r = await api.invite(Object.assign(inviteFacts(), { host: s.host, rsvp: s.rsvp, language: lang }));
+  const r = await api.invite(Object.assign(inviteFacts(), { host: fitTo(s.host, 60), rsvp: fitTo(s.rsvp, 120), language: lang }));
   stopThinking();
   fetching = null;
   if (!r.ok) { say(errorText(r)); return; }

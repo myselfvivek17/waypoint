@@ -330,3 +330,16 @@ def test_fifty_quick_requests_meet_the_rate_limit_politely():
     assert set(codes) <= {200, 429} and 429 in codes
     r = client.post("/api/chat", json={"message": "hi"})
     assert r.status_code == 429 and r.headers["retry-after"].isdigit() and "wait" in r.json()["error"]
+
+
+@pytest.mark.parametrize("text", ["add a DJ for 3 hours", "add a <img src=x onerror=alert(1)> stop", "drop the 2 starters"])
+def test_a_number_alone_is_not_a_head_count(plan, text):
+    """B20: "add a <img … alert(1)> stop" added 1 guest; "add a DJ for 3 hours" added 3."""
+    out = adjust(plan, text)
+    assert out["profile"]["guests"] == 30, out["title"]
+    if "DJ" in text:
+        assert out["understood"] and any(s["label"].startswith("DJ") for s in out["plan"]["stops"])
+
+
+def test_add_guests_still_reads_with_a_guest_word(plan):
+    assert adjust(plan, "please invite 5 more friends")["profile"]["guests"] == 35
