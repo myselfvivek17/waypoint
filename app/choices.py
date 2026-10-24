@@ -804,8 +804,9 @@ def stop_rule(s: Stop, r: rules.RulesResult, p: Profile) -> str:
     return base
 
 
-def replan(plan: Plan, p: Profile, now: dt.date) -> Plan:
-    """Same stops, refreshed rules, explanations and deadlines for a changed profile."""
+def replan(plan: Plan, p: Profile, now: dt.date, chosen: dict[str, str] | None = None) -> Plan:
+    """Same stops, refreshed rules, explanations and deadlines for a changed profile; tasks name the
+    options in ``chosen``, so a revision that swaps a pick also renames its task."""
     r = rules.evaluate(p, now)
     old = plan.profile.guests
     stops = [s.model_copy(update={"rule": stop_rule(s, r, p)}, deep=True) for s in plan.stops]
@@ -816,7 +817,7 @@ def replan(plan: Plan, p: Profile, now: dt.date) -> Plan:
                 o.reason = pat.sub(rf"{p.guests}\1", o.reason)
                 o.why = pat.sub(rf"{p.guests}\1", o.why)
     return plan.model_copy(update={"profile": p, "title": p.title or plan.title, "stops": stops,
-                                   "insights": r.insights, "tasks": planner.make_tasks(stops, p, r, now), "today": now})
+                                   "insights": r.insights, "tasks": planner.make_tasks(stops, p, r, now, chosen), "today": now})
 
 
 def _describe(s: Stop, item: Option, price: int) -> str:
@@ -970,9 +971,9 @@ async def run_ops(plan: Plan, chosen: dict[str, str], ripples: list[RippleState]
     if (c.guests, c.budget, c.date) != (p.guests or 1, p.budget or 0, p.date):
         await settle(c, p)
     new_p = p.model_copy(update={"guests": c.guests, "budget": c.budget, "date": c.date})
-    new_plan = replan(c.plan, new_p, now)
+    new_plan = replan(c.plan, new_p, now, c.chosen)
     after = priced(new_plan, c.guests, c.chosen, c.ripples)
-    rows, freed = diff(replan(plan, p, now), new_plan, before, after, p, new_p, set(booked))
+    rows, freed = diff(replan(plan, p, now, chosen), new_plan, before, after, p, new_p, set(booked))
     tb, ta = sum(x[2] for x in before), sum(x[2] for x in after)
     estimated = any(prices.source(x[0]) == "estimate" for x in after)
     rows.append(DiffRow(label="Total (includes estimates)" if estimated else "Total", before=inr(tb), after=inr(ta)))

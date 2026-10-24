@@ -200,3 +200,21 @@ def test_model_is_only_asked_about_the_clauses_code_could_not_read(plan, monkeyp
     assert seen["request"] == "we'd love a balloon artist"
     assert out["profile"]["guests"] == 50  # the model's set_guests is ignored: code read the guests
     assert any(s["label"].lower().startswith("balloon") for s in out["plan"]["stops"]) and out["source"] == "ai"
+
+
+def test_tasks_and_urgent_rows_name_the_revised_picks(plan):
+    """A revision that swaps a pick (a cheaper theme, a free invite) renames its task, in the diff and the plan."""
+    out = adjust(plan, "actually we have 50 more guests, our budget decreased a bit, and the event is two weeks earlier")
+    stops = {s["key"]: s for s in out["plan"]["stops"]}
+    names = {k: next(o["name"] for o in [s["rec"], *s["options"]] if o["id"] == out["chosen"].get(k, s["rec"]["id"]))
+             for k, s in stops.items()}
+    swapped = [k for k in out["chosen"] if out["chosen"][k] != stops[k]["rec"]["id"]]
+    assert swapped, "the budget cut should swap at least one undecided pick"
+    tasks = {t["id"]: t["text"] for t in out["plan"]["tasks"]}
+    for k in swapped:
+        assert tasks[k].endswith(": " + names[k]), (k, tasks[k], names[k])
+        assert stops[k]["rec"]["name"] not in tasks[k]
+    urgent = [label for label in rows(out) if label.startswith("Now urgent: ")]
+    assert urgent
+    for k in swapped:
+        assert not any(stops[k]["rec"]["name"][:30] in label for label in urgent), (k, urgent)

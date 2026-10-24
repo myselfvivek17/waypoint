@@ -237,12 +237,15 @@ def set_asks(stop: Stop, model_ask: str = "") -> None:
         o.ask = templates.choice_line(stop.key, stop.label, o.place_kind, kinds, recommended=False)
 
 
-def make_tasks(stops: list[Stop], p: Profile, r: RulesResult, now: dt.date) -> list[Task]:
+def make_tasks(stops: list[Stop], p: Profile, r: RulesResult, now: dt.date,
+               chosen: dict[str, str] | None = None) -> list[Task]:
     """Deadlines from the rules' lead times (or a mode's), clamped to [today, event day].
 
-    A skipped stop has no task; one the user already has becomes "confirm with …"; one done
-    their own way keeps their words.
+    A task names the option chosen for its stop (``chosen``), else the stop's pick. A skipped stop
+    has no task; one the user already has becomes "confirm with …"; one done their own way keeps
+    their words.
     """
+    chosen = chosen or {}
     order = [k for k in r.book_order] + [s.key for s in stops if s.key not in r.book_order]
     by_key = {s.key: s for s in stops}
     tasks: list[Task] = []
@@ -258,7 +261,8 @@ def make_tasks(stops: list[Stop], p: Profile, r: RulesResult, now: dt.date) -> l
         if s.status == "skip":
             continue
         verb = s.verb or rules.TASK_VERBS.get(key, "Book")
-        text = f"{verb}: {s.rec.name}"
+        item = next((o for o in [s.rec, *s.options] if o.id == chosen.get(key)), s.rec)
+        text = f"{verb}: {item.name}"
         if s.status == "have":
             verb, text = "Confirm", f"Confirm with {s.note or 'your own'}: {s.label.lower()}"
         elif s.status == "own":
