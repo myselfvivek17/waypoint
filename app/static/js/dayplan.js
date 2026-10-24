@@ -302,7 +302,8 @@ function adjustTag() {
     ai ? 'AI' : last === 'rules' && live ? 'Read by code, AI on standby' : 'Rules parser · AI offline');
 }
 
-/** The numbers no longer work: the rules' three ways out, the first one marked as the next step. */
+/** The numbers no longer work: the rules' three ways out. The first is the next step and says so in
+    words ("Recommended"), not only with its border. */
 function waysView(d) {
   return h('section', { class: 'chg ways-out', 'aria-labelledby': 'ways-h' },
     h('p', { class: 'step' }, "Let's make this work"),
@@ -310,6 +311,7 @@ function waysView(d) {
     h('p', { class: 'lead', style: { margin: '6px 0 0' } }, d.block_body),
     h('ol', { class: 'ways' }, d.ways.map((w, i) => h('li', null,
       h('button', { class: 'way', type: 'button', 'data-next': i === 0 ? true : null, disabled: state.busy, onClick: () => runWay(w) },
+        i === 0 ? h('span', { class: 'rectag' }, 'Recommended') : null,
         h('span', { class: 'wt' }, w.title), h('span', { class: 'wd' }, w.detail))))));
 }
 
@@ -355,7 +357,7 @@ export function planView() {
     ? 'Tap what matters most, then compare the options and tap Use this on the one you like.'
     : 'Tap what matters most; the options appear here.')
     : step === 'diff' && state.diff.ways && state.diff.ways.length
-    ? `With these changes the numbers don't work yet. Pick one of the ${state.diff.ways.length} ways under the preview, or tap Keep as it is.`
+    ? `With these changes the numbers don't work yet. Pick one of the ${state.diff.ways.length} ways under the preview (I marked one Recommended), or tap Keep as it is.`
     : step === 'diff' ? 'Check the before and after, then tap Apply changes, or Keep as it is.'
     : step === 'task' ? `${late ? `${late} task${late > 1 ? 's are' : ' is'} late. ` : ''}Next up: ${next.text}${next.due ? ` (${next.dueText[0].toLowerCase() + next.dueText.slice(1)})` : ''}. Tap ${doneWord} once it is done.`
       : rows.length ? 'Everything is booked. Tap Design the invitation card next.'

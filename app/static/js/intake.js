@@ -375,9 +375,10 @@ function blockView(b) {
     h('p', { class: 'step' }, b.type === 'budget' ? "Let's make this work" : 'One thing to check'),
     h('h2', { class: 'disp qq', id: 'q-h', tabindex: '-1' }, b.title),
     h('p', { class: 'lead' }, b.body),
-    guide(`Pick one of these ${b.ways.length} ways to carry on. The first is the one I would choose.`),
+    guide(`Pick one of these ${b.ways.length} ways to carry on. I marked one Recommended.`),
     h('ol', { class: 'ways' }, b.ways.map((w, i) => h('li', null,
       h('button', { class: 'way', type: 'button', 'data-next': i === 0 ? true : null, onClick: () => pickWay(w) },
+        i === 0 ? h('span', { class: 'rectag' }, 'Recommended') : null,
         h('span', { class: 'wt' }, w.title), h('span', { class: 'wd' }, w.detail))))));
 }
 

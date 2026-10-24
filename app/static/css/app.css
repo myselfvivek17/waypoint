@@ -149,6 +149,7 @@ body:has(.sheetwrap) #view [data-next]{animation:none}
 .ways{list-style:none;padding:0;margin:18px 0 0;display:grid;gap:12px}
 .way{width:100%;text-align:left;padding:16px 20px;border-radius:16px;border:2px solid var(--line);background:var(--paper);cursor:pointer;display:grid;gap:4px;transition:border-color .2s}
 .way:hover{border-color:var(--ink)}
+.rectag{justify-self:start;padding:1px 10px;border-radius:999px;background:var(--mari);color:var(--on-mari);font-size:13px;font-weight:700;letter-spacing:.04em}
 .wt{font-weight:700}.wd{color:var(--muted)}
 .evcard{position:sticky;top:20px;background:var(--paper);border:1.5px solid var(--line);border-radius:24px;padding:24px}
 .evh{font-family:'Fraunces',Georgia,serif;font-size:24px;margin:0}

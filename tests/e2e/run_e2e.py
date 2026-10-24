@@ -407,6 +407,8 @@ def edges(r: Run) -> None:
     p.goto(BASE + "/?demo=budget&reset=1")
     expect(p.locator(".ways .way")).to_have_count(3, timeout=40000)
     one_next_step(p, "impossible budget")
+    expect(p.locator(".ways .way").first.locator(".rectag")).to_have_text("Recommended")
+    expect(p.locator(".ways .rectag")).to_have_count(1)
     r.shot("edge-budget")
     p.locator(".way").first.click()
     expect(p.locator(".ways")).to_have_count(0, timeout=20000)
@@ -1037,7 +1039,12 @@ def v4_revision(r: Run, dark: bool) -> None:
     expect(p.locator(".explain")).to_contain_text("so I took 10%")
     expect(p.locator(".explain")).to_contain_text("You decided on")
     expect(p.locator(".ways-out .way")).to_have_count(3)
-    assert one_next_step(p, "a revision that no longer adds up").startswith("Keep ₹36,000, invite 60")
+    assert one_next_step(p, "a revision that no longer adds up").startswith("RecommendedKeep ₹36,000, invite 60")
+    # v4b: the recommended way says so in words, only on the first way, and the button's name includes it
+    expect(p.locator(".ways-out .rectag")).to_have_count(1)
+    expect(p.locator(".ways-out .way").first.locator(".rectag")).to_have_text("Recommended")
+    expect(p.get_by_role("button", name=re.compile(r"^Recommended Keep ₹36,000"))).to_have_count(1)
+    expect(p.locator("#view")).not_to_contain_text("the one I would choose")
     # v4b: while the preview is open the page talks about the preview, never "Nothing is late" beside it
     expect(p.locator("#plan-lead")).to_contain_text("preview of a change")
     expect(p.locator("#plan-lead")).not_to_contain_text("Nothing is late")
