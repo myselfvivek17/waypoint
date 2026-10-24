@@ -140,7 +140,7 @@ async def write(inp: InviteIn) -> InviteOut:
     data = {**facts(inp), "occasion": inp.type, "language": LANG_NAME[inp.language],
             "date_iso": inp.date.isoformat() if inp.date else None}
     res = await llm.ask("invite", INSTRUCTIONS, data, InviteDraft, fallback=lambda: fallback(inp),
-                        max_tokens=900, timeout=25)
+                        max_tokens=900, timeout=25, within=32)
     by_tone: dict[str, str] = {}
     for row in res.value.invites if isinstance(res.value.invites, list) else []:
         if isinstance(row, dict) and row.get("tone") in TONES and row["tone"] not in by_tone:

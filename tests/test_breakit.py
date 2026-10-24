@@ -454,3 +454,31 @@ def test_a_quote_with_several_prices_is_flagged(plan, text, flagged):
     """B29: "₹380-420 per plate" was read as ₹380 with nothing said (the README promises a flag)."""
     row = quotes(plan, [{"vendor": "A", "text": text}])["rows"][0]
     assert any("check which one is the price" in f for f in row["flags"]) == flagged, row["flags"]
+
+
+# ---------------------------------------------------------------- B31 a slow free-model chain
+
+def test_slow_models_stop_within_the_overall_budget(live_llm, monkeypatch):
+    """B31 (live run): three slow, empty free-model replies kept "Working out the options…" up for a minute,
+    longer than the browser waits (30 s); now every ask has an overall budget and then uses its fallback."""
+    import asyncio
+    import time
+
+    from pydantic import BaseModel
+
+    calls = []
+
+    async def slow(cfg, messages, max_tokens):
+        calls.append(cfg.timeout)
+        await asyncio.sleep(1.5)
+        raise RuntimeError("empty model reply")
+
+    class Out(BaseModel):
+        x: str = "fallback"
+
+    monkeypatch.setenv("WP_LLM_MODEL", "a/b:free,c/d:free,openrouter/free")
+    monkeypatch.setattr(llm, "_call", slow)
+    t0 = time.monotonic()
+    res = asyncio.run(llm.ask("t", "x", {}, Out, fallback=Out, timeout=15, within=3))
+    assert res.source == "fallback" and res.value.x == "fallback"
+    assert time.monotonic() - t0 < 3.5 and len(calls) <= 2 and all(t <= 3 for t in calls)

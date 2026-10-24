@@ -210,12 +210,15 @@ async def _call(cfg: Settings, messages: list[dict], max_tokens: int) -> str:
 
 
 async def ask(task: str, instructions: str, data: dict, schema: type[M],
-              fallback: Callable[[], M], max_tokens: int = 1200, timeout: float | None = None) -> Result[M]:
+              fallback: Callable[[], M], max_tokens: int = 1200, timeout: float | None = None,
+              within: float | None = None) -> Result[M]:
     """Ask the model for one JSON object matching ``schema``.
 
     Never raises for model problems: on refusal, timeout, an empty reply, bad JSON or a schema
     mismatch (after retrying down the model chain) the deterministic ``fallback`` is returned.
-    ``timeout`` caps each attempt below the configured default (short for chat turns).
+    ``timeout`` caps each attempt below the configured default (short for chat turns); ``within`` caps all
+    attempts together, so a chain of slow free models can't outlast the browser's own timeout (the
+    fallback is used once it runs out).
     """
     cfg = settings()
     if timeout is not None:
@@ -233,11 +236,16 @@ async def ask(task: str, instructions: str, data: dict, schema: type[M],
         stats["cache_hits"] += 1
         return Result(schema.model_validate(hit), "ai")
 
+    end = time.monotonic() + within if within is not None else None
     for attempt, chain in enumerate(attempt_chains(cfg.models), start=1):
+        left = end - time.monotonic() if end is not None else cfg.timeout
+        if left < 2:  # not enough time for another model: the fallback answers now
+            log.warning("%s: out of time after %d attempt(s)", task, attempt - 1)
+            break
         try:
             async with _slots:
                 stats["calls"] += 1
-                raw = await _call(replace(cfg, models=chain), messages, max_tokens)
+                raw = await _call(replace(cfg, models=chain, timeout=min(cfg.timeout, left)), messages, max_tokens)
             obj = extract_json(raw)
             value = schema.model_validate(obj)
             cache.put(key, value.model_dump(mode="json"))

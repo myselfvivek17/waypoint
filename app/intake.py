@@ -444,7 +444,7 @@ async def chat_turn(inp: ChatIn, today: dt.date) -> ChatOut:
                 "today": today.isoformat()}
         res = await llm.ask("chat", INSTRUCTIONS, data, ChatDraft,
                             fallback=lambda: _fallback(inp, base, asked_before), max_tokens=500,
-                            timeout=15)
+                            timeout=15, within=30)
         draft, result_source = res.value, res.source
         patch = sanitize_patch(draft.profile, today)
 
