@@ -685,16 +685,25 @@ async def _plan_op(c: Ctx, op: Op) -> None:
     venue = c.stop("venue")
     said = clip(op.text, 80) if op.text else ""
     if op.op in ("cut_budget", "set_budget"):
+        if op.op == "cut_budget" and amount_f is not None and not 0 < amount_f < 100:
+            c.notes.append(f"Cutting the budget by {amount_f:g}% isn't possible; tell me the new amount.")
+            return
+        if op.op == "set_budget" and (amount is None or amount < 1000):  # "set budget to 0", a model's null
+            c.notes.append("I couldn't use that budget: tell me an amount of at least ₹1,000, like ₹40,000.")
+            return
         if op.op == "cut_budget":
-            pct = min(max(amount_f or 20, 1), 90)
+            pct = amount_f or 20
             c.budget = int(round(c.budget * (1 - pct / 100) / 100) * 100)
             c.titles.append(said or f"Cut the budget by {pct:g}%")
         else:
-            c.budget = int(min(max(amount or c.budget, 1000), 500_000_000))
+            c.budget = int(min(amount, 500_000_000))
             c.titles.append(said or f"Set the budget to {inr(c.budget)}")
         c.budget_set = True
     elif op.op in ("add_guests", "remove_guests", "set_guests"):
-        k = int(amount or 10)
+        if not amount:  # a model's guest change without a number is not "10 guests"
+            c.notes.append("I couldn't tell how many guests: say a number, like \"add 10 guests\".")
+            return
+        k = int(amount)
         c.guests = min(5000, {"add_guests": c.guests + k, "remove_guests": max(1, c.guests - k),
                               "set_guests": max(1, k)}[op.op])
         c.titles.append(said or f"{'Add' if op.op == 'add_guests' else 'Remove' if op.op == 'remove_guests' else 'Plan for'} "
@@ -987,7 +996,7 @@ async def run_ops(plan: Plan, chosen: dict[str, str], ripples: list[RippleState]
         note += f" {inr(freed)} freed and kept as savings."
     gap = ta - c.budget
     block_title, block_body, ways = ways_out(new_p, ops) if new_band == "impossible" else ("", "", [])
-    if not block_title:  # when blocked, the ways out say it
+    if not block_title and c.titles:  # when blocked, the ways out say it; when nothing changed, nothing to fit
         note += (f" Still {inr(gap)} over budget: choose where the money should go." if gap > 0
                  else f" Fits the budget with {inr(-gap)} to spare.")
     explain = list(assumed) + c.explain + [f"I didn't act on “{clip(u, 80)}”: {CAN_DO}" for u in unread]
@@ -1031,6 +1040,10 @@ async def _revision(inp: AdjustIn, rev: revise.Revision, now: dt.date) -> Adjust
         extra = [o for o in validate_ops(res.value.ops, plan) if o.op not in PLAN_FIELDS]  # code already read those
         if extra:
             ops, source, unread = ops + extra, res.source, []
+    if not ops:  # every number was refused and nothing else was read: say why, change nothing
+        note = " ".join(rev.problems + ([f"I didn't act on “{clip('; '.join(unread), 80)}”: {CAN_DO}"] if unread else []))
+        return AdjustOut(understood=False, title="", rows=[], note=note, profile=plan.profile, chosen=inp.chosen,
+                         ripples=inp.ripples, plan=plan, source=source)
     return await run_ops(plan, inp.chosen, inp.ripples, inp.booked, ops[:MAX_OPS], now, inp.request, source,
                          inp.decided, rev.assumed + rev.problems, unread)
 
@@ -1045,7 +1058,7 @@ async def adjust(inp: AdjustIn, now: dt.date) -> AdjustOut:
     """
     plan = inp.plan
     rev = revise.read(inp.request, plan.profile, now)
-    if rev.found:
+    if rev.found or rev.problems:  # numbers read (or refused, "budget to 0"): the rest is read clause by clause
         return await _revision(inp, rev, now)
     res = await llm.ask("adjust", INSTRUCTIONS, _model_data(inp), OpsDraft,
                         fallback=lambda: OpsDraft(), max_tokens=1000, timeout=20)

@@ -28,7 +28,7 @@ TENS = r"(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:[\s-](?:one
 NUM = (rf"(?:\d+(?:\.\d+)?|(?:a\s+)?(?:couple(?:\s+of)?|few|dozen)|{TENS}|one|two|three|four|five|six|seven|eight|nine|"
        r"ten|eleven|twelve|fifteen|hundred|an?)")
 GUEST = r"(?:guests?|people|persons?|pax|heads|attendees|invitees|friends|relatives|members|adults|folks|kids|children)"
-UNIT = r"(?:days?|weeks?|wks?|months?)"
+UNIT = r"(?:days?|weeks?|wks?|months?|years?|yrs?)"
 
 # "two weeks earlier", "a week later"
 SHIFT = re.compile(rf"\b(?P<n>{NUM})\s*(?P<u>{UNIT})\s+(?P<w>earlier|sooner|before|ahead|early|later|after|late|out|back)\b")
@@ -42,7 +42,8 @@ LATE_VERBS = re.compile(r"^(?:postpone|delay|push|put)")
 MONTH = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?"
 DATE_TEXT = re.compile(rf"\d{{4}}-\d{{1,2}}-\d{{1,2}}|\b\d{{1,2}}(?:st|nd|rd|th)?\s*(?:of\s+)?{MONTH}(?:,?\s*\d{{4}})?|"
                        rf"\b{MONTH}\s+\d{{1,2}}(?:st|nd|rd|th)?\b(?:,?\s*\d{{4}})?|\b\d{{1,2}}/\d{{1,2}}(?:/\d{{2,4}})?")
-DATE_CUE = re.compile(r"\b(?:date|move|moved|shift|postpone|prepone|reschedule|on|to|now|instead|tomorrow)\b|"
+DATE_CUE = re.compile(r"\b(?:date|move|moved|shift|postpone|prepone|reschedule|on|to|now|instead|tomorrow|today|"
+                      r"next|this|coming|(?:mon|tues?|wed(?:nes)?|thu(?:rs)?|fri|sat(?:ur)?|sun)(?:day)?)\b|"
                       r"\d{4}-\d{2}-\d{2}|\b\d{1,2}/\d{1,2}\b")
 
 # "50 more guests", "+50 people", "10 fewer friends"
@@ -65,6 +66,8 @@ MONEY_TEXT = re.compile(r"(?:₹\s*)?\d+(?:\.\d+)?\s*(?:k|lakhs?|lacs?|l|crores?
 FILLER = re.compile(r"(?i)^(?:actually|ok(?:ay)?|so|oh|also|and|but|then|update|change|hey|hi|well)\b[\s,:-]*")
 VAGUE_SHARE = 10  # "a bit" less, in percent: said out loud whenever it is used
 VAGUE_NOTE = "You didn't say how much the budget"
+MAX_GUESTS = 5000
+MAX_RISE = 1000  # percent: "200% more budget" is three times the budget, never silently 90%
 
 
 def number(word: str) -> float | None:
@@ -133,7 +136,7 @@ def _months(d: dt.date, n: int) -> dt.date:
 
 
 def _unit_words(n: int, unit: str) -> str:
-    unit = "week" if unit.startswith("w") else "month" if unit.startswith("m") else "day"
+    unit = "week" if unit.startswith("w") else "month" if unit.startswith("m") else "year" if unit.startswith("y") else "day"
     return f"a {unit}" if n == 1 else f"{n} {unit}s"
 
 
@@ -156,7 +159,7 @@ def read_date(c: str, p: Profile, today: dt.date, rev: Revision) -> str:
                 rev.problems.append("The plan has no date yet, so there was nothing to move.")
             return c.replace(m.group(0), " ")
         n = int(n)
-        new = _months(p.date, sign * n) if m["u"].startswith("m") else \
+        new = _months(p.date, sign * n * (12 if m["u"].startswith("y") else 1)) if m["u"][0] in "my" else \
             p.date + dt.timedelta(days=sign * n * (7 if m["u"].startswith("w") else 1))
         _set_date(new, f"{_unit_words(n, m['u'])} {'earlier' if sign < 0 else 'later'}", today, rev)
         return c.replace(m.group(0), " ")
@@ -169,7 +172,7 @@ def read_date(c: str, p: Profile, today: dt.date, rev: Revision) -> str:
 
 
 def _set_date(new: dt.date, how: str, today: dt.date, rev: Revision) -> None:
-    label = f"{new.day} {new:%b}"
+    label = f"{new.day} {new:%b}" + (f" {new.year}" if (new - today).days > 270 else "")
     if new < today:
         rev.problems.append(f"{label} has already passed, so I kept the date as it was.")
         return
@@ -180,6 +183,10 @@ def _set_date(new: dt.date, how: str, today: dt.date, rev: Revision) -> None:
 def read_guests(c: str, p: Profile, rev: Revision) -> str:
     """'50 more guests', '+50 people', '10 fewer', 'for 80 people', 'guests down to 40', 'double the guests'."""
     old = p.guests or 0
+    if old and re.search(rf"\b(?:halve[ds]?|half)\b.*\b{GUEST}\b|\b{GUEST}\b.*\bhalved\b", c):
+        new = max(1, old // 2)
+        rev.guests, rev.said["guests"] = new, f"half the guests ({old} → {new})"
+        return re.sub(rf"\b(?:halve[ds]?|half)\b|\b{GUEST}\b", " ", c)
     if old and re.search(rf"\b(?:double|twice)\b.*\b{GUEST}\b|\b{GUEST}\b.*\bdoubled?\b", c):
         new = min(5000, old * 2)
         rev.guests, rev.said["guests"] = new, f"twice the guests ({old} → {new})"
@@ -198,6 +205,9 @@ def read_guests(c: str, p: Profile, rev: Revision) -> str:
         absolute = not how.endswith("by")
         up, down = bool(UP.search(c) or "increase" in how), bool(DOWN.search(c) or "decrease" in how)
     n = number(m["n"])
+    if n == 0 and (absolute or not (up or down)):
+        rev.problems.append(f"A plan needs at least 1 guest, so I kept {old}." if old else "A plan needs at least 1 guest.")
+        return c.replace(m.group(0), " ")
     if not n or n < 1:
         return c
     n = int(n)
@@ -207,7 +217,12 @@ def read_guests(c: str, p: Profile, rev: Revision) -> str:
         new, word = old - n, f"{n} fewer guests"
     else:
         new, word = n, f"{n} guests"
-    new = max(1, min(5000, new))
+    if new < 1:
+        rev.problems.append(f"{n} fewer than {old} leaves nobody, so I kept {old} guests. Tell me the new number.")
+        return c.replace(m.group(0), " ")
+    if new > MAX_GUESTS:
+        rev.problems.append(f"I can plan for up to {MAX_GUESTS:,} guests, so I used {MAX_GUESTS:,}.")
+        new = MAX_GUESTS
     rev.guests, rev.said["guests"] = new, f"{word} ({old} → {new})" if old else word
     return c.replace(m.group(0), " ")
 
@@ -235,11 +250,33 @@ def read_budget(c: str, p: Profile, rev: Revision) -> str:
     up, down = bool(UP.search(c)), bool(DOWN.search(c))
     pct = re.search(r"(\d+(?:\.\d+)?)\s*(?:%|percent|per cent)", c)
     if pct and old and (up != down or said_budget):
-        n = min(90.0, float(pct[1]))
+        n = float(pct[1])
         rise = up and not down
+        if not rise and n >= 100:
+            rev.problems.append(f"Cutting the budget by {n:g}% leaves nothing, so I kept {inr(old)}. Tell me the new amount.")
+            return c.replace(pct[0], " ")
+        if rise and n > MAX_RISE:
+            rev.problems.append(f"{n:g}% more is beyond what I can plan with, so I kept {inr(old)}. Tell me the new amount.")
+            return c.replace(pct[0], " ")
         new = int(round(old * (1 + n / 100 if rise else 1 - n / 100) / 100) * 100)
         rev.budget, rev.said["budget"] = new, f"budget {'up' if rise else 'down'} {n:g}% ({inr(old)} → {inr(new)})"
         return c.replace(pct[0], " ")
+    if old and said_budget and re.search(r"\b(?:double[ds]?|twice)\b", c):
+        new = min(500_000_000, old * 2)
+        rev.budget, rev.said["budget"] = new, f"twice the budget ({inr(old)} → {inr(new)})"
+        return " "
+    if said_budget and re.search(r"(?:\b(?:to|is|of|be)\s*|₹\s*|^\s*)0+\b(?!\s*%)|\bzero\b|\bnothing\b", c):
+        rev.problems.append(f"A budget of ₹0 can't pay for a celebration, so I kept {inr(old)}." if old else
+                            "A budget of ₹0 can't pay for a celebration.")
+        return " "
+    neg = re.search(r"(?:\bminus\s+|(?:^|(?<=[\s(:=]))[-−]\s*)(₹?\s*\d[\d.]*\s*(?:k|lakhs?|lacs?|crores?|cr|thousand)?)\b", c)
+    if neg and said_budget and old and (amount := parse_money("₹" + neg[1].lstrip("₹ "), loose=True)):
+        new = old - amount
+        if new < 1000:
+            rev.problems.append(f"{inr(amount)} less than {inr(old)} leaves too little to plan with, so I kept {inr(old)}.")
+            return " "
+        rev.budget, rev.said["budget"] = new, f"budget down by {inr(amount)}"
+        return MONEY_TEXT.sub(" ", c.replace(neg.group(0), " "), count=1)
     if old and said_budget and re.search(r"\bhal(?:f|ve[sd]?)\b", c):
         new = int(round(old / 2 / 100) * 100)
         rev.budget, rev.said["budget"] = new, f"half the budget ({inr(old)} → {inr(new)})"
@@ -273,9 +310,15 @@ def read(text: str, p: Profile, today: dt.date) -> Revision:
     rev = Revision()
     for c in clauses(text):
         before = (rev.guests, rev.budget, rev.date, len(rev.problems))
+        said = dict(rev.said)
         left = read_date(c.lower(), p, today, rev)
         left = read_guests(left, p, rev)
         read_budget(left, p, rev)
+        for i, (name, was) in enumerate((("guests", before[0]), ("budget", before[1]), ("date", before[2]))):
+            now = (rev.guests, rev.budget, rev.date)[i]
+            if was is not None and now != was:  # two different answers in one sentence: the last one wins, said
+                rev.problems.append(f"You gave two {name} changes (“{said[name]}” and “{rev.said[name]}”); "
+                                    f"I used the last one. Tell me if you meant the first.")
         if (rev.guests, rev.budget, rev.date, len(rev.problems)) == before:
             rev.rest.append(c)
     return rev
