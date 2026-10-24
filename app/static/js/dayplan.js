@@ -317,6 +317,8 @@ function diffView(d) {
   const blocked = !!(d.ways && d.ways.length);
   return h('div', { role: 'region', 'aria-labelledby': 'diff-h' },
     h('h3', { class: 'disp h2', id: 'diff-h', tabindex: '-1', style: { fontSize: '22px' } }, d.title),
+    blocked ? h('p', { class: 'warnline', id: 'diff-warn' }, "With these changes the numbers don't work yet. " +
+      'The ways to make it work are under this preview.') : null,
     h('table', { class: 'diff' },
       h('caption', { class: 'sr' }, d.title + ': before and after'),
       h('thead', null, h('tr', null, h('th', { scope: 'col' }, 'What'), h('th', { scope: 'col' }, 'Before'), h('th', { scope: 'col' }, 'After'))),
@@ -351,7 +353,7 @@ export function planView() {
     ? 'Tap what matters most, then compare the options and tap Use this on the one you like.'
     : 'Tap what matters most; the options appear here.')
     : step === 'diff' && state.diff.ways && state.diff.ways.length
-    ? `These numbers don't work yet. Pick one of the ${state.diff.ways.length} ways below; the first is the one I would choose.`
+    ? `With these changes the numbers don't work yet. Pick one of the ${state.diff.ways.length} ways under the preview, or tap Keep as it is.`
     : step === 'diff' ? 'Check the before and after, then tap Apply changes, or Keep as it is.'
     : step === 'task' ? `${late ? `${late} task${late > 1 ? 's are' : ' is'} late. ` : ''}Next up: ${next.text}${next.due ? ` (${next.dueText[0].toLowerCase() + next.dueText.slice(1)})` : ''}. Tap ${doneWord} once it is done.`
       : rows.length ? 'Everything is booked. Tap Design the invitation card next.'
@@ -360,8 +362,11 @@ export function planView() {
     h('p', { class: 'step' }, 'My plan'),
     h('h1', { class: 'disp h1', tabindex: '-1' }, plan.title),
     guide(guideText),
-    h('p', { class: 'lead' }, (allDecided ? 'Every stop is decided. ' : 'Some stops are still suggestions: decide them on the Journey. ') +
-      (late ? `Do the late task${late > 1 ? 's' : ''} first.` : 'Nothing is late.')),
+    // while a preview is open the lead is about the preview, never the current plan beside it
+    h('p', { class: 'lead', id: 'plan-lead' }, step === 'diff' || step === 'trade'
+      ? 'You are looking at a preview of a change. Your plan stays as it is until you tap Apply.'
+      : (allDecided ? 'Every stop is decided. ' : 'Some stops are still suggestions: decide them on the Journey. ') +
+        (late ? `Do the late task${late > 1 ? 's' : ''} first.` : 'Nothing is late.')),
     h('div', { class: 'plangrid' },
       h('section', { 'aria-labelledby': 'tasks-h' },
         next ? h('div', { class: 'next dark' },

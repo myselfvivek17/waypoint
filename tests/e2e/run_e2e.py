@@ -1036,6 +1036,13 @@ def v4_revision(r: Run, dark: bool) -> None:
     expect(p.locator(".explain")).to_contain_text("You decided on")
     expect(p.locator(".ways-out .way")).to_have_count(3)
     assert one_next_step(p, "a revision that no longer adds up").startswith("Keep ₹36,000, invite 60")
+    # v4b: while the preview is open the page talks about the preview, never "Nothing is late" beside it
+    expect(p.locator("#plan-lead")).to_contain_text("preview of a change")
+    expect(p.locator("#plan-lead")).not_to_contain_text("Nothing is late")
+    expect(p.locator("#guide")).to_contain_text("With these changes the numbers don't work yet")
+    expect(p.locator("#diff-warn")).to_contain_text("With these changes the numbers don't work yet")
+    assert p.evaluate("""() => { const w = document.getElementById('diff-warn').getBoundingClientRect(),
+        t = document.querySelector('.diff').getBoundingClientRect(); return w.bottom <= t.top + 1; }"""), "warning not by the preview"
     r.shot("v4-revision-diff" + suffix)
     p.locator(".ways-out .way").first.click()
     expect(p.locator(".ways-out")).to_have_count(0, timeout=40000)
@@ -1044,6 +1051,7 @@ def v4_revision(r: Run, dark: bool) -> None:
     r.shot("v4-revision-way" + suffix, full=False)
     p.click("#view button >> text=Apply changes")
     expect(p.locator("#diff-h")).to_have_count(0)
+    expect(p.locator("#plan-lead")).not_to_contain_text("preview")
     prof = p.evaluate("import('/js/store.js').then((m) => [m.state.plan.profile, m.state.profile])")
     assert prof[0] == prof[1] and (prof[0]["guests"], prof[0]["budget"], prof[0]["date"]) == (60, 36000, "2026-11-01"), prof
     expect(p.locator("#bud-h + p [data-budget-line]")).to_contain_text("of ₹36,000")
