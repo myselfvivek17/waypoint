@@ -352,6 +352,9 @@ def assemble(draft: DraftPlan, fb: DraftPlan, p: Profile, r: RulesResult, ps: Pl
         notes.append(f"Prices were scaled down so the plan fits your {inr(p.budget)} budget.")
     if ps.places:
         notes.append("Venues and bakeries come from OpenStreetMap; check prices and availability with them.")
+    elif ps.source == "not-found":
+        notes.append(f"I couldn't find “{clip(p.area, 60)}” on the map (I look in India only), so venues are described, "
+                     "not named. Check the area on Details.")
     elif ps.source:
         notes.append("No named venues were found on OpenStreetMap near there, so venues are described, not named.")
     elif p.area:

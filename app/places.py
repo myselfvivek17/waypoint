@@ -122,8 +122,9 @@ class Photo(BaseModel):
 class PlaceSet(BaseModel):
     center: Point | None = None
     places: list[Place] = []
-    # "overpass" or "nominatim" when a source answered (even with nothing nearby); "" when
-    # every source failed, which is the only case the plan calls listings "unavailable".
+    # "overpass" or "nominatim" when a source answered (even with nothing nearby); "not-found" when the
+    # geocoder answered that there is no such area; "" when every source failed, which is the only case
+    # the plan calls listings "unavailable".
     source: str = ""
 
     def get(self, place_id: str | None) -> Place | None:
@@ -258,6 +259,8 @@ async def _search(q: str) -> list[dict]:
     if COUNTRIES:
         params["countrycodes"] = COUNTRIES
     rows = await _get_json(NOMINATIM, params=params, timeout=8.0)
+    if isinstance(rows, list) and not rows:  # the geocoder answered: there is no such place (in WP_COUNTRIES)
+        geo_cache.put(("nowhere", q.strip().lower()), True, ttl=600)
     return [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
 
 
@@ -553,8 +556,8 @@ async def venues(area: str, guests: int | None, point: Point | None = None) -> P
 
 async def _venues(area: str, guests: int | None, point: Point | None = None) -> PlaceSet:
     center = point or await geocode(area)
-    if center is None:
-        return PlaceSet()
+    if center is None:  # "not-found": the map has no such area; "": nobody could be asked
+        return PlaceSet(source="not-found" if geo_cache.get(("nowhere", area.strip().lower())) else "")
     radius = 3000 if (guests or 0) <= 120 else 8000
     key = ("venues", round(center.lat, 3), round(center.lon, 3), radius)
     hit = place_cache.get(key)

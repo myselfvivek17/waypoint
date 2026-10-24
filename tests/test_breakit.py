@@ -365,3 +365,22 @@ def test_an_unusable_required_answer_is_asked_again_even_with_other_gaps():
                                        "transcript": [{"field": None, "q": "What are you celebrating?", "a": "A birthday"}]})
     out = r.json()
     assert out["ask"] == "guests" and "up to 5,000 guests" in out["reply"]
+
+
+# ---------------------------------------------------------------- B26 a place the map doesn't know
+
+from app import places  # noqa: E402
+
+
+@pytest.mark.parametrize("answer, note", [
+    (httpx.Response(200, json=[]), "couldn't find “Paris, France” on the map"),
+    (httpx.Response(503), "Live place listings were unavailable"),
+])
+def test_an_unknown_area_is_not_called_an_outage(answer, note):
+    """B26: "Paris, France" (outside India) or a made-up place said "Live place listings were unavailable"."""
+    with respx.mock(assert_all_called=False) as m:
+        m.get(places.NOMINATIM).mock(return_value=answer)
+        m.route().mock(return_value=httpx.Response(503))
+        r = client.post("/api/plan", json={"profile": {**BASE, "area": "Paris, France"}})
+    assert r.status_code == 200
+    assert any(note in n for n in r.json()["notes"]), r.json()["notes"]
