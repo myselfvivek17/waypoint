@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -27,7 +28,7 @@ from .intake import parse_date, parse_money
 from .places import PlaceSet
 from .rules import inr
 from .schemas import DayItem, Mode, Option, Plan, Profile, Source, Stop, Strict, Task
-from .validators import CAPS, clip, line_total, to_int
+from .validators import CAPS, clip, line_total, model_line, to_int
 
 log = logging.getLogger("waypoint.choices")
 
@@ -236,9 +237,39 @@ def minutes(t: str) -> int:
     return (int(m[1]) % 12 + (12 if m[3] == "PM" else 0)) * 60 + int(m[2])
 
 
-def validate_ops(raw: list, plan: Plan) -> list[Op]:
-    """Keep only operations that name a real thing in this plan, with safe values."""
+PLAN_FIELDS = {"cut_budget", "set_budget", "add_guests", "remove_guests", "set_guests", "move_date"}
+NUMERIC_PLAN_OPS = PLAN_FIELDS - {"move_date"}
+
+
+def said_numbers(text: str) -> set[float]:
+    """Every number a request states, as written and as rupees: "35k" -> {35, 35000}, "fifty" -> {50}."""
+    t = revise.spoken_amounts(text.lower()).replace(",", "")
+    out: set[float] = set()
+    for m in re.finditer(r"(\d+(?:\.\d+)?)\s*(k|lakhs?|lacs?|crores?|cr|thousand)?\b", t):
+        out.add(float(m[1]))
+        if m[2] and (money := parse_money("₹" + m.group(0))):
+            out.add(float(money))
+    for w in re.findall(r"[a-z]+(?:-[a-z]+)?", t):
+        if w not in ("a", "an") and (n := revise.number(w)) is not None:
+            out.add(n)
+    return out
+
+
+def _number(value: object) -> float | None:
+    """A model's amount as a finite number, else None (never NaN or Infinity in a reply)."""
+    try:
+        n = float(str(value).replace(",", "").replace("₹", "")) if not isinstance(value, bool) else None
+    except (TypeError, ValueError):
+        return None
+    return n if n is not None and math.isfinite(n) else None
+
+
+def validate_ops(raw: list, plan: Plan, request: str | None = None) -> list[Op]:
+    """Keep only operations that name a real thing in this plan, with safe values. With ``request`` (the
+    model read the user's words), a guest or budget number is kept only if the words state it: a model
+    can't turn "make it feel like Bollywood" into 5,000 guests."""
     out: list[Op] = []
+    said = said_numbers(request) if request is not None else None
     for r in raw[:MAX_OPS] if isinstance(raw, list) else []:
         try:
             op = r if isinstance(r, Op) else Op.model_validate(r)
@@ -246,6 +277,10 @@ def validate_ops(raw: list, plan: Plan) -> list[Op]:
             continue
         op.op = (op.op or "").strip().lower()
         if op.op not in OPS:
+            continue
+        op.amount = None if op.amount is None else _number(op.amount)
+        op.cost = None if op.cost is None else to_int(op.cost, 0, 500_000_000)
+        if said is not None and op.op in NUMERIC_PLAN_OPS and op.amount is not None and op.amount not in said:
             continue
         if op.op in STOP_OPS:
             s = resolve_stop(plan, op.stop or op.name)
@@ -936,9 +971,6 @@ def diff(before_plan: Plan, after_plan: Plan, before: list, after: list, p: Prof
     return rows, freed, more_urgent
 
 
-PLAN_FIELDS = {"cut_budget", "set_budget", "add_guests", "remove_guests", "set_guests", "move_date"}
-
-
 def ways_out(new_p: Profile, ops: list[Op]) -> tuple[str, str, list[WayOut]]:
     """The rules' "let's make this work" ways for numbers below the floor, as operations to re-run
     with the revision (a later set_guests or set_budget replaces the earlier one)."""
@@ -991,7 +1023,7 @@ async def run_ops(plan: Plan, chosen: dict[str, str], ripples: list[RippleState]
     old_band, new_band = rules.budget_band(p)[0], rules.budget_band(new_p)[0]
     if old_band != new_band and old_band and new_band:
         rows.append(DiffRow(label="Budget feel", before=old_band, after=new_band))
-    note = " ".join(c.notes)
+    note = " ".join(dict.fromkeys(c.notes))  # one model op repeated 200 times says its problem once
     if freed:
         note += f" {inr(freed)} freed and kept as savings."
     gap = ta - c.budget
@@ -1062,13 +1094,13 @@ async def adjust(inp: AdjustIn, now: dt.date) -> AdjustOut:
         return await _revision(inp, rev, now)
     res = await llm.ask("adjust", INSTRUCTIONS, _model_data(inp), OpsDraft,
                         fallback=lambda: OpsDraft(), max_tokens=1000, timeout=20)
-    ops, source = validate_ops(res.value.ops, plan), res.source
+    ops, source = validate_ops(res.value.ops, plan, inp.request), res.source
     if not ops:
         ops = parse_ops(inp.request, plan, now)
         if ops:  # the rules parser understood what the model did not
             source = "fallback" if source == "ai" else source
     if not ops:
-        reply = clip(res.value.reply, CAPS["reply"]) if res.source == "ai" else ""
+        reply = model_line(res.value.reply, CAPS["reply"]) if res.source == "ai" else ""
         sug, sug_text = closest(inp.request, plan)
         note = " ".join(rev.problems + ([reply] if reply else []) + [CAN_DO])
         return AdjustOut(understood=False, title="", rows=[], note=note,

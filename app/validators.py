@@ -7,6 +7,7 @@ here, dates are clamped here, and every string is trimmed to a fixed length.
 from __future__ import annotations
 
 import datetime as dt
+import math
 import re
 from collections.abc import Iterable, Sequence
 from typing import TypeVar
@@ -49,7 +50,8 @@ def drop_money(text: str) -> str:
     return " ".join(s for s in sentences(text) if not _MONEY.search(s))
 
 
-_CLAIM = re.compile(r"(?i)\b(?:is|are|it's|they're)\s+(?:still\s+)?available\b|\bavailab(?:le|ility)\s+(?:on|for)\s+(?:your|the)\s+"
+_CLAIM = re.compile(r"(?i)\b(?:is|are|it's|they're)\s+(?:still\s+|now\s+)?(?:confirmed\s+and\s+)?available\b|"
+                    r"\b(?:is|are)\s+(?:now\s+)?(?:confirmed|guaranteed|booked)\b|\bavailab(?:le|ility)\s+(?:on|for)\s+(?:your|the)\s+"
                     r"(?:date|day)|\b(?:confirmed|guaranteed)\s+(?:price|rate|booking|availability)|\bprice\s+is\s+confirmed|"
                     r"\b(?:booked|reserved|held)\s+for\s+you\b")
 
@@ -58,6 +60,14 @@ def drop_claims(text: str) -> str:
     """Remove sentences that claim availability or a confirmed price: Waypoint never contacts a
     vendor, so it cannot know either."""
     return " ".join(s for s in sentences(text) if not _CLAIM.search(s))
+
+
+_TAG = re.compile(r"<[^>]{0,200}>|[<>`]")
+
+
+def model_line(text: object, limit: int) -> str:
+    """A model's free-text reply made fit to show: no markup, no amounts, no availability or price claims."""
+    return clip(drop_claims(drop_money(_TAG.sub("", str(text or "")))), limit)
 
 
 ASK_OFFERS = (("cheap", "Cheaper"), ("closer", "Closer"), ("vibe", "Different vibe"))
@@ -103,6 +113,8 @@ def require(data: dict, fields: Sequence[str]) -> list[str]:
 def to_int(value: object, lo: int = 0, hi: int = 10**9) -> int | None:
     """Parse a model-supplied number ("₹12,000", 12000.0) and clamp it to [lo, hi]."""
     if isinstance(value, bool):
+        return None
+    if isinstance(value, float) and not math.isfinite(value):  # NaN / Infinity from a model's JSON
         return None
     if isinstance(value, (int, float)):
         n = int(value)

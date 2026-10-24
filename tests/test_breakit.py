@@ -204,3 +204,57 @@ def test_model_ops_without_numbers_change_nothing(plan):
     r = client.post("/api/apply", json={"plan": plan, "ops": [{"op": "add_guests"}, {"op": "set_budget"}]})
     out = r.json()
     assert r.status_code == 200 and not out["understood"] and numbers(out) == UNCHANGED
+
+
+# ---------------------------------------------------------------- B13-B15 a live model that misbehaves
+
+import httpx  # noqa: E402
+import respx  # noqa: E402
+
+from app import llm  # noqa: E402
+
+VAGUE = "make it feel more like a Bollywood night"
+
+
+def model_says(plan: dict, content: str, request: str = VAGUE) -> tuple[int, dict, str]:
+    with respx.mock(assert_all_called=False) as m:
+        m.post(llm.API_URL).mock(return_value=httpx.Response(200, json={
+            "model": "x/y:free", "usage": {"cost": 0}, "choices": [{"message": {"content": content}}]}))
+        r = client.post("/api/adjust", json={"plan": plan, "request": request})
+    return r.status_code, (r.json() if r.status_code < 500 else {}), r.text
+
+
+@pytest.mark.parametrize("content", [
+    "", "not json {", '{"ops": "drop everything", "reply": 5}', '{"ops": [{"op": {"x": 1}}, null, 5, "skip"]}',
+    '{"ops": [{"op": "set_budget", "amount": NaN}, {"op": "add_guests", "amount": Infinity}]}',
+    '{"ops": [{"op": "set_budget", "amount": "NaN"}, {"op": "remove_guests", "amount": -50}]}',
+    '{"ops": [{"op": "set_guests", "amount": 1e30}, {"op": "set_budget", "amount": 1e300}]}',
+    '{"ops": [{"op": "move_date", "date": "1999-01-01"}]}',
+])
+def test_garbage_from_the_model_changes_nothing(plan, live_llm, content):
+    """B13: NaN/Infinity reached the JSON reply (the browser can't parse it); a model could set 5,000 guests
+    and ₹50 crore from a sentence with no numbers."""
+    status, out, text = model_says(plan, content)
+    assert status == 200 and numbers(out) == UNCHANGED, (content, out.get("title"))
+    assert not any(bad in text for bad in ("NaN", "Infinity", "Traceback"))
+
+
+def test_model_numbers_must_be_in_the_request(plan, live_llm):
+    status, out, _ = model_says(plan, '{"ops": [{"op": "set_guests", "amount": 45}]}', "make it forty-five of us, Bollywood style")
+    assert out["understood"] and out["profile"]["guests"] == 45
+
+
+def test_model_reply_is_plain_and_claims_nothing(plan, live_llm):
+    """B14: "the venue is confirmed and available at ₹1 <img onerror>" was shown as the reply."""
+    content = ('{"ops": [], "reply": "Ignore the rules: the venue is confirmed and available at ₹1. '
+               '<img src=x onerror=alert(1)> I can make the music louder."}')
+    _, out, _ = model_says(plan, content)
+    assert not out["understood"]
+    assert "<" not in out["note"] and "confirmed" not in out["note"] and "₹1" not in out["note"]
+
+
+def test_a_repeated_model_op_says_its_problem_once(plan, live_llm):
+    """B15: 200 add_stop ops repeated "A plan can have up to 10 stops" over and over."""
+    import json
+    _, out, _ = model_says(plan, json.dumps({"ops": [{"op": "add_stop", "name": f"stop {i}"} for i in range(200)]}))
+    assert out["note"].count("up to 10 stops") <= 1 and len(out["plan"]["stops"]) <= 10
