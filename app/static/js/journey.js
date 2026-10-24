@@ -4,11 +4,11 @@ import { api, errorText } from './api.js';
 import { landscape, mapBase, noPhotoIcon, toneArt } from './art.js';
 import { h, inr, s, safeUrl } from './dom.js';
 import { chipDefs } from './intake.js';
-import { allOptions, budgetLine, lineTotal, maxReach, nextIndex, stopsModel, summary } from './model.js';
+import { allOptions, budgetLine, lineTotal, maxReach, nextIndex, priceSays, priceText, stopsModel, summary } from './model.js';
 import { applyAdjustment, chooseOption, confirmStop, setStopStatus, state } from './store.js';
 import { moreMenu } from './menu.js';
 import { tourOpen } from './tour.js';
-import { announce, empty, go, guide, later, primary, rerender, say, stopThinking, think, update } from './ui.js';
+import { announce, empty, go, guide, later, priceTag, priceWithTag, primary, rerender, say, stopThinking, think, update } from './ui.js';
 
 const PHOTO_HOSTS = ['upload.wikimedia.org', 'api.openverse.org', 'fastly.4sqi.net'];
 const PAGE_HOSTS = ['commons.wikimedia.org', 'openverse.org', 'foursquare.com'];
@@ -130,6 +130,9 @@ for (const ev of ['pointerdown', 'keydown']) {
 
 // ------------------------------------------------------------------ actions
 
+/** A stop's price as a screen reader hears it: "about ₹12,000, an estimate". */
+const spoken = (x) => (x.src === 'estimate' ? 'about ' : '') + inr(x.price) + (x.src === 'estimate' ? ', an estimate' : '');
+
 function current(m) {
   return Math.min(state.j.stopIdx, m.length);
 }
@@ -142,7 +145,7 @@ function openStop(i) {
   update({ j: Object.assign({}, state.j, { stopIdx: i, pin: null }), slide: 0, why: false, change: false, changeMsg: '', sheet: false },
     { focus: 'stop' });
   const m = stopsModel(state), x = m[i];
-  if (x) announce(`Stop ${i + 1}, ${x.label}: ${x.item.name}, ${inr(x.price)}.` + (x.status === 'open' ? ' ' + askLine(x) : ''));
+  if (x) announce(`Stop ${i + 1}, ${x.label}: ${x.item.name}, ${spoken(x)}.` + (x.status === 'open' ? ' ' + askLine(x) : ''));
 }
 
 function lookGood(m) {
@@ -153,7 +156,7 @@ function lookGood(m) {
   update({ slide: 0, why: false, change: false, sheet: false }, { focus: next >= m.length ? 'finale' : 'stop' });
   const after = stopsModel(state);
   announce(next >= after.length ? 'Every stop is decided.'
-    : `${cur.label} confirmed. Stop ${next + 1}, ${after[next].label}: ${after[next].item.name}, ${inr(after[next].price)}.`
+    : `${cur.label} confirmed. Stop ${next + 1}, ${after[next].label}: ${after[next].item.name}, ${spoken(after[next])}.`
       + (after[next].status === 'open' ? ' ' + askLine(after[next]) : ''));
 }
 
@@ -344,7 +347,7 @@ function stopMenu(m, cur) {
 
 function statusCard(m, idx) {
   const cur = m[idx], st = cur.s, label = cur.label.toLowerCase();
-  const cost = cur.price ? ` · ${inr(cur.price)} (your figure)` : '';
+  const cost = cur.price ? ` · ${inr(cur.price)} (your number)` : '';
   const head = st.status === 'skip' ? `No ${label}` : st.status === 'have' ? st.note || `You have the ${label}` : st.note;
   const body = st.status === 'skip' ? `You're leaving out the ${label}.${cur.freed ? ` ${inr(cur.freed)} is freed and kept as savings.` : ''}`
     : st.status === 'have' ? `Covered by you, so I won't suggest anything here${cost}. I'll remind you to confirm it.`
@@ -456,8 +459,8 @@ function budgetBar(m, idx, reach) {
   const start = lastSegs && lastSegs.length === widths.length ? lastSegs : widths;
   lastSegs = widths;
   const segs = m.map((x, i) => {
-    const tip = `${x.label}: ${inr(x.price)}, ${x.decided ? 'decided' : 'still a suggestion'}`;
-    return h('button', { class: `seg ${x.decided ? 'd' : 'p'}${i === idx ? ' cur' : ''}`, type: 'button', title: tip,
+    const tip = `${x.label}: ${priceText(x.price, x.src)}${x.src === 'estimate' ? ' (estimate)' : x.src === 'none' ? '' : ` (${x.src === 'quoted' ? 'quoted' : 'your number'})`}, ${x.decided ? 'decided' : 'still a suggestion'}`;
+    return h('button', { class: `seg ${x.src === 'quoted' || x.src === 'yours' ? 'f' : x.decided ? 'd' : 'p'}${i === idx ? ' cur' : ''}`, type: 'button', title: tip,
       'aria-label': tip + (i > reach ? '. Decide the earlier stops first.' : '. Open this stop.'),
       style: { flexBasis: start[i].toFixed(2) + '%' },
       onClick: () => (i > reach ? say('Decide the earlier stops first, or use "Plan the rest for me".') : openStop(i)) });
@@ -471,14 +474,15 @@ function budgetBar(m, idx, reach) {
     h('div', { class: 'bar', role: 'group', 'aria-label': `Budget bar: planned ${inr(b.total)} against ${inr(b.budget)}` },
       segs, h('div', { class: 'mark', 'aria-hidden': 'true', style: { left: `calc(${((b.budget / b.denom) * 100).toFixed(2)}% - 2px)` } })),
     h('div', { class: 'legend', 'aria-hidden': 'true' },
-      h('span', null, 'Solid: decided'), h('span', null, 'Striped: still a suggestion'), h('span', null, 'Red line: your budget')),
+      h('span', null, 'Solid: decided'), h('span', null, 'Striped: still a suggestion'), h('span', null, 'Green: quoted or your number'),
+      h('span', null, '≈ estimate, not a quote'), h('span', null, 'Red line: your budget')),
     h('ul', { class: 'budlist', 'aria-label': 'Budget by stop' }, m.map((x, i) => h('li', null,
       h('button', { type: 'button', 'aria-disabled': i > reach ? 'true' : null, 'data-stop': x.key, 'data-price': x.price,
         onClick: () => (i > reach ? say('Decide the earlier stops first.') : openStop(i)) },
-        h('span', { class: `sw ${x.decided ? 'd' : 'p'}`, 'aria-hidden': 'true' }),
+        h('span', { class: `sw ${x.src === 'quoted' || x.src === 'yours' ? 'f' : x.decided ? 'd' : 'p'}`, 'aria-hidden': 'true' }),
         x.status === 'skip' ? h('s', null, x.label) : x.label,
-        x.status === 'skip' ? ' skipped' : x.status !== 'open' && !x.price ? ' yours' : ` ${inr(x.price)}`,
-        h('span', { class: 'sr' }, x.status !== 'open' ? `, ${STATUS_WORD[x.status].toLowerCase()}` : x.decided ? ', decided' : ', suggestion'))))));
+        x.status === 'skip' ? ' skipped' : x.status !== 'open' && !x.price ? ' yours' : ` ${priceText(x.price, x.src)}`,
+        h('span', { class: 'sr' }, priceSays(x.price ? x.src : 'none') + (x.status !== 'open' ? `, ${STATUS_WORD[x.status].toLowerCase()}` : x.decided ? ', decided' : ', suggestion')))))));
 }
 
 function rulesBox() {
@@ -611,7 +615,7 @@ function listView(m, idx, reach) {
         i === idx ? h('span', { class: 'heretag' }, 'You are here') : i === up ? h('span', { class: 'heretag soon' }, 'Up next') : null,
         h('span', { class: 'sltag' }, `${x.decided ? '✓ ' : ''}${x.label} · ${i + 1} of ${m.length} · ${x.status !== 'open' ? STATUS_WORD[x.status] : x.decided ? 'Decided' : off ? 'To be decided' : 'Proposed'}`), h('br'),
         h('b', null, off ? 'Waiting on earlier stops' : x.status === 'skip' ? 'Not in the plan' : x.status !== 'open' ? (x.s.note || STATUS_WORD[x.status]) : x.item.name),
-        off || x.status === 'skip' ? null : ' · ' + inr(x.price),
+        off || x.status === 'skip' ? null : ' · ' + priceText(x.price, x.src),
         x.flag && !off ? h('span', { class: 'tt2' }, ' · Updated: ' + x.flag.note) : null),
       h('button', { class: 'btn', type: 'button', disabled: off,
         onClick: () => { setJ({ view: 'path' }, { render: false }); openStop(i); } },
@@ -669,7 +673,7 @@ function proposal(m, idx) {
   const cur = m[idx], it = cur.item, st = cur.s, p = state.plan.profile, guests = p.guests || 0;
   const alts = allOptions(st).filter((o) => o.id !== it.id);
   const ai = state.plan.source === 'ai';
-  const unit = it.per_guest ? `${inr(it.price)} a guest × ${guests}`
+  const unit = cur.src !== 'estimate' ? '' : it.per_guest ? `≈ ${inr(it.price)} a guest × ${guests}`
     : cur.extra ? `includes ${cur.extra > 0 ? '+' : '−'}${inr(Math.abs(cur.extra))} from earlier choices` : '';
   const where = it.where ? `From ${it.where}${it.dist_km != null ? `, ${it.dist_km} km from ${distFrom()}` : ''}`
     : it.dist_km != null ? `${it.dist_km} km from ${distFrom()}` : '';
@@ -684,7 +688,8 @@ function proposal(m, idx) {
       h('h2', { id: 'prop-h', class: 'disp ph2', tabindex: '-1' }, it.name),
       where || osm ? h('p', { class: 'pwhere' }, where, where && osm ? ' · ' : '',
         osm ? h('a', { href: osm, target: '_blank', rel: 'noopener noreferrer' }, 'Open in OpenStreetMap', h('span', { class: 'sr' }, ' (new tab)')) : null) : null,
-      h('p', { class: 'pprice' }, inr(cur.price), unit ? h('span', null, unit) : null),
+      h('p', { class: 'pprice' }, priceWithTag(cur.price, cur.src, cur.src === 'quoted' ? ` · ${st.quote.vendor}` : ''),
+        unit ? h('span', null, unit) : null),
       it.cap && it.cap < guests ? h('p', { class: 'err' }, `Fits about ${it.cap}, fewer than your ${guests} guests.`) : null,
       h('p', { class: 'preason' }, it.reason),
       h('p', { class: 'askq disp', id: 'ask-q' }, askLine(cur)),
@@ -723,7 +728,8 @@ function finale() {
     h('h2', { id: 'fin-h', class: 'disp h1', tabindex: '-1' }, 'Every stop is decided.'),
     h('p', { class: 'lead' }, `You have ${inr(b.total)} planned` + (b.over
       ? `, which is ${inr(b.total - b.budget)} over your budget. "Ask to adjust" on My plan can bring it back.`
-      : `, with ${inr(b.budget - b.total)} of your budget still free.`)),
+      : `, with ${inr(b.budget - b.total)} of your budget still free.`)
+      + (b.est ? ` ${b.firm ? `${inr(b.est)} of it is` : 'These are'} Waypoint's estimates: confirm each price with the vendor.` : '')),
     h('div', { class: 'pact' },
       primary({ onClick: () => go('day') }, 'See the event day'),
       h('button', { class: 'btn', type: 'button', onClick: () => go('plan') }, 'Open my plan'),
@@ -770,7 +776,7 @@ export function sheetView() {
         o.where || o.dist_km != null || osm ? h('p', { class: 'tt2' },
           o.where ? 'From ' + o.where : o.dist_km != null ? `${o.dist_km} km from ${distFrom()}` : '',
           osm ? [' · ', h('a', { href: osm, target: '_blank', rel: 'noopener noreferrer' }, 'OpenStreetMap', h('span', { class: 'sr' }, ` page for ${o.name} (new tab)`))] : null) : null,
-        h('p', { class: 'altp' }, inr(price), ' ',
+        h('p', { class: 'altp' }, priceText(price, 'estimate'), ' ', priceTag('estimate'), ' ',
           h('span', { class: d > 0 ? 'more' : d < 0 ? 'less' : '' }, '· ' + (d === 0 ? 'same price' : d > 0 ? inr(d) + ' more' : inr(-d) + ' less'))),
         h('p', { class: 'altr' }, small ? `Too small for ${guests} guests (fits ${o.cap}).` : o.reason),
         rip.length ? h('p', { class: 'altrip' }, 'Also changes ' + rip.join('; ')) : null,
@@ -794,7 +800,7 @@ export function sheetView() {
         h('button', { id: 'sheet-x', class: 'btn', type: 'button', onClick: close }, 'Close')),
       h('div', { class: 'sheetcur' },
         h('div', null, h('p', { class: 'step', style: { margin: '0' } }, 'Your current choice'),
-          h('b', null, cur.item.name), ' · ' + inr(cur.price)),
+          h('b', null, cur.item.name), ' · ' + priceText(cur.price, cur.src)),
         primary({ onClick: () => { state.sheet = false; lookGood(m); } }, cur.decided ? 'Keep and continue' : 'Looks good')),
       state.changeMsg ? h('p', { class: 'chgmsg', role: 'status' }, state.changeMsg) : null,
       h('ul', { class: 'alts' }, alts)));

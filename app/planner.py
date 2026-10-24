@@ -17,12 +17,12 @@ import re
 
 from pydantic import Field
 
-from . import llm, places, rules, templates
+from . import llm, places, prices, rules, templates
 from .places import Place, PlaceSet
 from .rules import RulesResult, inr
 from .schemas import (PRIVATE, Block, Day, DayItem, Mode, DraftOption, DraftPlan, DraftStop, Option, PhotoHint, Plan, Profile,
                       Ripple, Source, Stop, Strict, Task)
-from .validators import (CAPS, cap_list, clamp_due, clean_ask, clip, drop_money, drop_wrong_kind, fit_budget,
+from .validators import (CAPS, cap_list, clamp_due, clean_ask, clip, drop_claims, drop_money, drop_wrong_kind, fit_budget,
                          fix_option_kinds, line_total, sentences, to_int)
 
 log = logging.getLogger("waypoint.planner")
@@ -70,7 +70,8 @@ JSON shape:
  "days": [{"label": "", "title": "", "items": [{"time": "6:00 PM", "title": "", "note": "",
  "art": "arrive|games|cake|dinner|music|ritual"}]}],
  "invite": ""}
-For per-guest stops, price is per guest.
+For per-guest stops, price is per guest. Prices are your estimates: never say a price is confirmed or that
+a place or vendor is available, because nobody has contacted them.
 """
 
 class Blocked(Exception):
@@ -155,7 +156,7 @@ def make_option(d: DraftOption, *, key: str, oid: str, kind: str, p: Profile, ps
     elif key not in NO_PHOTO:
         q = _query(d.photo_query) or _query(fallback.photo_query)
         photo = PhotoHint(query=q, relation="inspiration") if q else None
-    reason, why = drop_money(d.reason), drop_money(d.why)
+    reason, why = drop_claims(drop_money(d.reason)), drop_claims(drop_money(d.why))
     if key == "venue" and place is not None:
         # The facts about a real place come from OSM, not from the model's prose.
         facts = f"{place.label}, {place.dist_km} km from {templates.area_short(p)}."
@@ -339,7 +340,7 @@ def assemble(draft: DraftPlan, fb: DraftPlan, p: Profile, r: RulesResult, ps: Pl
         ds = next((s for s in draft.stops if s.key == key), fbs)
         later = {k for k, _ in order[i + 1:]}
         stops.append(build_stop(ds, fbs, key, label, later, p, ps, r, rejected))
-    notes: list[str] = []
+    notes: list[str] = [prices.NOTE]
     if rejected:
         log.info("rejected %d place id(s) not in the fetched set", len(rejected))
         notes.append("A suggested place could not be verified, so it was replaced with a generic suggestion.")

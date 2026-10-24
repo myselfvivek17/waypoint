@@ -26,7 +26,7 @@ function initial() {
     demo: {}, serverToday: null, llmMode: null, photos: {}, nearby: {},
     locBusy: false, locMsg: '', areaCheck: null,
     choiceForm: null, choiceNote: '', choiceCost: '', choiceMsg: '', confirmRemove: null, addOpen: false, addDraft: '',
-    dayForm: null, dayDraft: '', dayAlts: null, adjSuggest: null, menu: null, modesFor: null,
+    dayForm: null, dayDraft: '', dayAlts: null, adjSuggest: null, menu: null, modesFor: null, paidFor: null, paidDraft: '',
   };
 }
 
@@ -130,6 +130,13 @@ export function setStopStatus(key, status, note = '', cost = null) {
   const j = state.j;
   state.j = Object.assign({}, j, { decided: Object.assign({}, j.decided, { [key]: status !== 'open' }) });
   untick([key]);
+}
+
+/** What the user says they booked a stop for (null clears it): from then on the stop shows their
+    number instead of Waypoint's estimate. */
+export function setPaid(key, amount) {
+  const n = amount === '' || amount == null ? null : Math.max(0, Math.min(500000000, Math.round(Number(amount)) || 0));
+  state.plan = Object.assign({}, state.plan, { stops: state.plan.stops.map((s) => (s.key === key ? Object.assign({}, s, { paid: n }) : s)) });
 }
 
 /** A moment on the event day: keep, skip, already sorted, or the user's own words. */

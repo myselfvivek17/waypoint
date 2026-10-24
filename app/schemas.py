@@ -162,6 +162,21 @@ class Mode(BaseModel):
     why: str = ""
 
 
+class Quote(BaseModel):
+    """A vendor's quote the user chose for a stop. Every value came from what the user pasted or
+    typed; Waypoint never contacts vendors, so nothing here is confirmed by Waypoint."""
+
+    vendor: str = Field(max_length=80)
+    price: int = Field(ge=0, le=500_000_000)  # the total for this stop, extras included
+    includes: list[str] = Field(default_factory=list, max_length=10)
+    clarify: list[str] = Field(default_factory=list, max_length=10)  # still to ask: GST, travel, …
+
+    @field_validator("includes", "clarify", mode="before")
+    @classmethod
+    def _short(cls, v: object) -> object:
+        return [str(x)[:120] for x in v][:10] if isinstance(v, list) else []
+
+
 class Stop(BaseModel):
     key: str
     label: str
@@ -172,6 +187,8 @@ class Stop(BaseModel):
     status: StopStatus = "open"
     note: str = Field("", max_length=160)
     user_cost: int | None = Field(None, ge=0, le=500_000_000)
+    paid: int | None = Field(None, ge=0, le=500_000_000)  # what the user says they booked it for
+    quote: Quote | None = None
     mode: str | None = None
     modes: list[Mode] = []
     custom: bool = False   # added by the user

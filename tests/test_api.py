@@ -59,7 +59,7 @@ def test_chat_then_plan_then_adjust(no_places):
     adj = r.json()
     assert adj["understood"] and adj["profile"]["budget"] == 32000
     assert any(row["label"] == "Budget" for row in adj["rows"])
-    assert adj["rows"][-1]["label"] == "Total"
+    assert adj["rows"][-1]["label"].startswith("Total")
 
 
 def test_plan_budget_always_fits_even_when_tight(no_places, aditya):

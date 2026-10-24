@@ -2,10 +2,10 @@
 import { api, errorText } from './api.js';
 import { dayIcon } from './art.js';
 import { h, inr, longDate } from './dom.js';
-import { budgetLine, stopsModel, summary, taskRows } from './model.js';
+import { budgetLine, priceSays, priceText, stopsModel, summary, taskRows } from './model.js';
 import { moreMenu } from './menu.js';
-import { applyAdjustment, pickItemAlt, setItemStatus, state, toggleTick } from './store.js';
-import { announce, empty, go, guide, primary, say, stopThinking, think, todayIso, update } from './ui.js';
+import { applyAdjustment, pickItemAlt, setItemStatus, setPaid, state, toggleTick } from './store.js';
+import { announce, empty, go, guide, priceTag, primary, say, stopThinking, think, todayIso, update } from './ui.js';
 
 /** Suggested requests, chosen from what this plan actually has. */
 function adjustChips(plan) {
@@ -173,6 +173,24 @@ async function copyInvite() {
 
 // ------------------------------------------------------------------ plan view
 
+/** A booked stop can carry what the user actually paid: their number replaces the estimate. */
+function paidControl(t, sv) {
+  if (!t.ticked || !sv || t.mandatory || sv.status !== 'open') return null;
+  if (state.paidFor !== t.id) {
+    return h('button', { class: 'linkb paidb', id: 'pd-' + t.id, type: 'button',
+      onClick: () => update({ paidFor: t.id, paidDraft: sv.s.paid == null ? '' : String(sv.s.paid) }, { focus: 'pd-in' }) },
+    sv.s.paid == null ? 'Add what you booked it for' : 'Change the booked amount', h('span', { class: 'sr' }, ': ' + sv.label));
+  }
+  const done = (v) => { setPaid(sv.key, v); update({ paidFor: null, paidDraft: '' }, { focus: 'pd-' + t.id }); };
+  return h('form', { class: 'paidf', onSubmit: (e) => { e.preventDefault(); done(state.paidDraft.trim()); } },
+    h('label', { for: 'pd-in', class: 'flab' }, `Booked the ${sv.label.toLowerCase()} for, in rupees`),
+    h('input', { id: 'pd-in', class: 'cin', type: 'number', min: 0, max: 500000000, step: 1, inputmode: 'numeric',
+      value: state.paidDraft, onInput: (e) => { state.paidDraft = e.target.value; } }),
+    h('button', { class: 'btn pri', type: 'submit' }, 'Save'),
+    sv.s.paid != null ? h('button', { class: 'btn', type: 'button', onClick: () => done(null) }, 'Back to the estimate') : null,
+    h('button', { class: 'btn', type: 'button', onClick: () => update({ paidFor: null }, { focus: 'pd-' + t.id }) }, 'Cancel'));
+}
+
 /** The badge says who reads the request: the model when one is live, otherwise the rules parser.
     After a request it reflects who actually answered (a live model can still fail over to the rules). */
 function adjustTag() {
@@ -235,7 +253,9 @@ export function planView() {
             'aria-describedby': 'tkd-' + t.id }),
           h('label', { for: 'tk-' + t.id }, h('span', { class: 'tt1' }, t.text),
             h('span', { class: 'tt2' + (t.late && !t.ticked ? ' late' : ''), id: 'tkd-' + t.id }, `${t.dueText} · ${t.status}`)),
-          t.costText ? h('span', { class: 'tcost' }, t.costText) : null)))),
+          t.costText ? h('span', { class: 'tcost', title: t.src === 'estimate' ? 'An estimate: confirm it with the vendor.' : null },
+            t.costText, h('span', { class: 'sr' }, priceSays(t.src))) : null,
+          paidControl(t, m.find((x) => x.key === t.stop)))))),
       h('section', { 'aria-labelledby': 'bud-h' },
         h('h2', { class: 'disp h2', id: 'bud-h', style: { marginTop: '0' } }, 'Budget'),
         h('p', { style: { margin: '0 0 8px' } }, h('span', { 'data-budget-line': '' }, budgetLine(b)),
@@ -247,7 +267,8 @@ export function planView() {
           h('div', { class: 'btrack', 'aria-hidden': 'true' },
             h('div', { class: 'bplan', style: { width: ((x.price / maxP) * 100).toFixed(1) + '%' } }),
             h('div', { class: 'bspent', style: { width: spentKeys.has(x.key) ? ((x.price / maxP) * 100).toFixed(1) + '%' : '0' } })),
-          h('span', null, inr(x.price), h('span', { class: 'sr' }, spentKeys.has(x.key) ? ', booked' : ', not booked yet'))))),
+          h('span', { class: 'bamt' }, priceText(x.price, x.src), ' ', priceTag(x.price ? x.src : 'none'),
+            h('span', { class: 'sr' }, spentKeys.has(x.key) ? ', booked' : ', not booked yet'))))),
         h('div', { class: 'adjust' },
           h('h2', { class: 'disp h2' }, 'Ask to adjust ', adjustTag()),
           h('form', { class: 'ans', onSubmit: (e) => { e.preventDefault(); runAdjust(state.adjDraft); } },

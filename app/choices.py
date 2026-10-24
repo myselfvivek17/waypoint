@@ -22,7 +22,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
-from . import llm, planner, rules, templates
+from . import llm, planner, prices, rules, templates
 from .intake import parse_date, parse_money
 from .places import PlaceSet
 from .rules import inr
@@ -146,14 +146,7 @@ def _all(stop: Stop) -> list[Option]:
     return [stop.rec, *stop.options]
 
 
-def stop_price(s: Stop, item: Option, guests: int, extra: int) -> int:
-    """What a stop costs: nothing when skipped, the user's own figure when they have it or do it
-    their way, otherwise the chosen option plus knock-on extras."""
-    if s.status == "skip":
-        return 0
-    if s.status in ("have", "own"):
-        return s.user_cost or 0
-    return max(0, line_total(item.price, item.per_guest, guests) + extra)
+stop_price = prices.stop_price
 
 
 def priced(plan: Plan, guests: int, chosen: dict[str, str], ripples: list[RippleState]) -> list[tuple[Stop, Option, int]]:
@@ -704,13 +697,16 @@ def replan(plan: Plan, p: Profile, now: dt.date) -> Plan:
 
 
 def _describe(s: Stop, item: Option, price: int) -> str:
+    """One side of a diff row; every amount says whether it is an estimate, a quote or the user's."""
+    src = prices.source(s)
     if s.status == "skip":
         return "skipped"
     if s.status == "have":
-        return "you have it" + (f": {s.note}" if s.note else "") + (f" · {inr(price)}" if price else "")
+        return "you have it" + (f": {s.note}" if s.note else "") + (f" · {prices.tag(price, src)}" if price else "")
     if s.status == "own":
-        return f"your way: “{s.note}”" + (f" · {inr(price)}" if price else "")
-    return f"{item.name} · {inr(price)}"
+        return f"your way: “{s.note}”" + (f" · {prices.tag(price, src)}" if price else "")
+    name = f"{s.quote.vendor}'s quote" if src == "quoted" and s.quote else item.name
+    return f"{name} · {prices.tag(price, src)}"
 
 
 def diff(before_plan: Plan, after_plan: Plan, before: list, after: list, p: Profile, new_p: Profile) -> tuple[list[DiffRow], int]:
@@ -731,8 +727,8 @@ def diff(before_plan: Plan, after_plan: Plan, before: list, after: list, p: Prof
             freed += b[2]
         elif b is None:
             rows.append(DiffRow(label=a[0].label, before="not in the plan", after=_describe(*a)))
-        elif (a[1].id, a[2], a[0].status, a[0].note, a[0].mode, a[1].name) != \
-                (b[1].id, b[2], b[0].status, b[0].note, b[0].mode, b[1].name):
+        elif (a[1].id, a[2], a[0].status, a[0].note, a[0].mode, a[1].name, a[0].quote, a[0].paid) != \
+                (b[1].id, b[2], b[0].status, b[0].note, b[0].mode, b[1].name, b[0].quote, b[0].paid):
             rows.append(DiffRow(label=a[0].label, before=_describe(*b), after=_describe(*a)))
             if a[0].status == "skip" and b[0].status != "skip":
                 freed += b[2]
@@ -770,7 +766,8 @@ async def run_ops(plan: Plan, chosen: dict[str, str], ripples: list[RippleState]
     after = priced(new_plan, c.guests, c.chosen, c.ripples)
     rows, freed = diff(plan, new_plan, before, after, p, new_p)
     tb, ta = sum(x[2] for x in before), sum(x[2] for x in after)
-    rows.append(DiffRow(label="Total", before=inr(tb), after=inr(ta)))
+    estimated = any(prices.source(x[0]) == "estimate" for x in after)
+    rows.append(DiffRow(label="Total (includes estimates)" if estimated else "Total", before=inr(tb), after=inr(ta)))
     old_band, new_band = rules.budget_band(p)[0], rules.budget_band(new_p)[0]
     if old_band != new_band and old_band and new_band:
         rows.append(DiffRow(label="Budget feel", before=old_band, after=new_band))

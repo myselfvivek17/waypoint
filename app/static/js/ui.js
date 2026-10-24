@@ -1,5 +1,6 @@
 /* Shared UI plumbing: state updates, routing, the "working on it" overlay, toasts and announcements. */
 import { busyMotif } from './art.js';
+import { PRICE_HELP, PRICE_LABEL, priceText } from './model.js';
 import { state, save } from './store.js';
 import { clear, h, reducedMotion } from './dom.js';
 
@@ -117,4 +118,16 @@ export function todayIso() {
   if (state.serverToday) return state.serverToday;
   const d = new Date();
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+/** A price with its honest label: "≈ ₹12,000 [Estimate]", "₹12,000 [Quoted]" or "₹12,000 [Your number]".
+    The tag's tooltip says what it means; screen readers hear it as part of the price. */
+export function priceTag(src, extra = '') {
+  if (!PRICE_LABEL[src]) return null;
+  return h('span', { class: 'ptag price ' + src, title: PRICE_HELP[src] },
+    PRICE_LABEL[src] + extra, h('span', { class: 'sr' }, '. ' + PRICE_HELP[src]));
+}
+
+export function priceWithTag(amount, src, extra = '') {
+  return [priceText(amount, src), ' ', priceTag(src, extra)];
 }

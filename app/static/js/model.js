@@ -8,11 +8,43 @@ export function lineTotal(o, guests) {
   return o.per_guest ? o.price * guests : o.price;
 }
 
-/** What a stop costs: nothing when skipped, the user's own figure when they already have it or do
-    it their way, otherwise the chosen option plus knock-on extras. Mirrors choices.stop_price. */
+// ------------------------------------------------------------------ honest prices (mirrors prices.py)
+
+/** Where a stop's price comes from: 'none' (skipped), 'yours' (typed by the user: what they already
+    pay, or what they booked it for), 'quoted' (a quote they chose) or 'estimate' (Waypoint's). */
+export function priceSource(s) {
+  if (s.status === 'skip') return 'none';
+  if (s.status === 'have' || s.status === 'own' || s.paid != null) return 'yours';
+  if (s.quote) return 'quoted';
+  return 'estimate';
+}
+
+export const PRICE_LABEL = { estimate: 'Estimate', yours: 'Your number', quoted: 'Quoted' };
+export const PRICE_HELP = {
+  estimate: "An estimate from Waypoint, not a confirmed price. Confirm it with the vendor.",
+  yours: 'A figure you typed in.',
+  quoted: "From a quote you entered. Waypoint hasn't contacted the vendor.",
+};
+
+/** "≈ ₹12,000" for an estimate; a number the user typed or was quoted has no "≈". */
+export function priceText(amount, src) {
+  return (src === 'estimate' ? '≈ ' : '') + inr(amount);
+}
+
+/** The words a screen reader hears after the amount: ", an estimate: confirm it with the vendor". */
+export function priceSays(src) {
+  return src === 'estimate' ? ', an estimate: confirm it with the vendor' : src === 'quoted' ? ', quoted by the vendor'
+    : src === 'yours' ? ', your number' : '';
+}
+
+/** What a stop costs: nothing when skipped; the user's own figure when they have it, do it their
+    way or booked it; a chosen quote; otherwise the chosen option plus knock-on extras.
+    Mirrors prices.stop_price. */
 export function stopPrice(s, item, guests, extra) {
-  if (s.status === 'skip') return 0;
-  if (s.status === 'have' || s.status === 'own') return s.user_cost || 0;
+  const src = priceSource(s);
+  if (src === 'none') return 0;
+  if (src === 'yours') return (s.paid != null && (s.status || 'open') === 'open' ? s.paid : s.user_cost) || 0;
+  if (src === 'quoted') return s.quote.price || 0;
   return Math.max(0, lineTotal(item, guests) + extra);
 }
 
@@ -27,7 +59,7 @@ export function stopsModel(st) {
     const status = s.status || 'open';
     return {
       s, i, key: s.key, label: s.label, item, extra, status, decided: !!j.decided[s.key] || status !== 'open',
-      price: stopPrice(s, item, guests, extra), freed: status === 'skip' ? Math.max(0, lineTotal(item, guests) + extra) : 0,
+      price: stopPrice(s, item, guests, extra), src: priceSource(s), freed: status === 'skip' ? Math.max(0, lineTotal(item, guests) + extra) : 0,
       flag: note ? { note } : null,
     };
   });
@@ -39,7 +71,8 @@ export function budgetModel(stops, profile, ticks = {}) {
   const booked = stops.filter((x) => ticks[x.key]).reduce((a, x) => a + x.price, 0);
   const decided = stops.filter((x) => x.decided).length;
   const freed = stops.reduce((a, x) => a + x.freed, 0);
-  return { total, budget, booked, decided, freed, count: stops.length, free: budget - total,
+  const est = stops.filter((x) => x.src === 'estimate').reduce((a, x) => a + x.price, 0);
+  return { total, budget, booked, decided, freed, est, firm: total - est, count: stops.length, free: budget - total,
     denom: Math.max(budget, total, 1), over: total > budget };
 }
 
@@ -49,9 +82,10 @@ export function summary(st) {
   return { stops, budget: budgetModel(stops, st.plan.profile, st.ticks), profile: st.plan.profile };
 }
 
-/** The one wording of the budget line, used on every screen. */
+/** The one wording of the budget line, used on every screen. It says how much is still an estimate. */
 export function budgetLine(b) {
-  return `Planned ${inr(b.total)} of ${inr(b.budget)} · booked ${inr(b.booked)}`;
+  const split = !b.firm ? 'all estimates' : !b.est ? 'all quoted or yours' : `${inr(b.est)} estimated, ${inr(b.firm)} quoted or yours`;
+  return `Planned ${inr(b.total)} of ${inr(b.budget)} (${split}) · booked ${inr(b.booked)}`;
 }
 
 /** First stop not yet decided, or n when all are. */
@@ -87,7 +121,7 @@ export function taskRows(st, stops, today) {
       return {
         id: t.id, stop: t.stop, mandatory: t.mandatory, why: t.why, due: t.due, ticked, late, status, text,
         dueText: t.due ? (isStop ? (sv.status === 'open' ? 'Book by ' : 'By ') : 'By ') + shortDate(t.due) : 'Date to be set',
-        price: isStop ? sv.price : 0, costText: isStop && sv.price ? inr(sv.price) : '',
+        price: isStop ? sv.price : 0, src: isStop ? sv.src : 'none', costText: isStop && sv.price ? priceText(sv.price, sv.src) : '',
       };
     });
   // stops added after the plan was made have no task yet: derive one
@@ -95,7 +129,7 @@ export function taskRows(st, stops, today) {
     if (sv.status === 'skip' || rows.some((r) => r.stop === sv.key && !r.mandatory)) continue;
     rows.push({ id: sv.key, stop: sv.key, mandatory: false, why: '', due: null, ticked: !!st.ticks[sv.key], late: false,
       status: st.ticks[sv.key] ? 'Done' : 'No date yet', text: (sv.s.verb || 'Book') + ': ' + sv.item.name,
-      dueText: 'Date to be set', price: sv.price, costText: sv.price ? inr(sv.price) : '' });
+      dueText: 'Date to be set', price: sv.price, src: sv.src, costText: sv.price ? priceText(sv.price, sv.src) : '' });
   }
   rows.sort((a, b) => (a.due || '9999').localeCompare(b.due || '9999') || (a.mandatory - b.mandatory));
   return rows;

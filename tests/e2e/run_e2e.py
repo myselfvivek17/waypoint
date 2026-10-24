@@ -921,10 +921,61 @@ def area_picker(r: Run, dark: bool) -> None:
     p.unroute_all()
 
 
+def open_sample(p: Page, dark: bool = False) -> None:
+    p.goto(BASE + "/?reset=1")
+    if dark:
+        p.click("#theme")
+    p.click("#view button >> text=Aditya's 22nd birthday")
+    expect(p.locator("#prop-h")).to_be_visible(timeout=160000)
+
+
+def v4_prices(r: Run, dark: bool) -> None:
+    """Item 1: every Waypoint price is labelled an estimate; the user's own numbers are not."""
+    p = r.page
+    suffix = "-dark" if dark else ""
+    r.step("honest prices: estimates are labelled everywhere, your numbers and quotes are not" + (" (dark)" if dark else ""))
+    open_sample(p, dark)
+    helper = p.evaluate("""() => import('/js/model.js').then((m) => {
+        const s = (kw) => Object.assign({ status: 'open', rec: { price: 500, per_guest: true } }, kw);
+        const row = (kw) => [m.priceSource(s(kw)), m.stopPrice(s(kw), s(kw).rec, 30, 0)];
+        return { est: row({}), skip: row({ status: 'skip' }), have: row({ status: 'have', user_cost: 4000 }),
+                 paid: row({ paid: 13500 }), quoted: row({ quote: { vendor: 'A', price: 14200 } }),
+                 text: [m.priceText(12000, 'estimate'), m.priceText(12000, 'quoted'), m.priceText(12000, 'yours')] }; })""")
+    assert helper == {"est": ["estimate", 15000], "skip": ["none", 0], "have": ["yours", 4000], "paid": ["yours", 13500],
+                      "quoted": ["quoted", 14200], "text": ["≈ ₹12,000", "₹12,000", "₹12,000"]}, helper
+    price = p.locator(".pprice")
+    expect(price).to_contain_text("≈ ₹")
+    expect(price.locator(".ptag.price.estimate")).to_have_text(re.compile(r"^Estimate"))
+    assert "confirm it with the vendor" in price.locator(".ptag").get_attribute("title").lower()
+    expect(p.locator(".budtop [data-budget-line]")).to_contain_text("(all estimates)")
+    expect(p.locator(".legend")).to_contain_text("≈ estimate, not a quote")
+    p.click("#opt-btn")
+    expect(p.locator(".alt .altp").first).to_contain_text("≈ ₹")
+    expect(p.locator(".alt .ptag.price.estimate").first).to_be_visible()
+    r.shot("v4-estimate-sheet" + suffix, full=False)
+    p.keyboard.press("Escape")
+    r.shot("v4-estimate-journey" + suffix, full=False)
+    p.click("nav >> text=My plan")
+    expect(p.locator(".task .tcost").first).to_contain_text("≈ ₹")
+    expect(p.locator(".brow .ptag.price.estimate").first).to_be_visible()
+    first = p.locator(".task").filter(has=p.locator(".tcost")).first
+    key = first.locator("input").get_attribute("id")[3:]
+    first.locator("input").check()
+    p.click("#pd-" + key)
+    p.fill("#pd-in", "4321")
+    p.click(".paidf button[type=submit]")
+    expect(p.locator(f".brow[data-stop='{key}'] .ptag.price.yours")).to_have_text(re.compile("^Your number"))
+    expect(p.locator(f".brow[data-stop='{key}']")).to_contain_text("₹4,321")
+    expect(p.locator("#bud-h + p [data-budget-line]")).to_contain_text("₹4,321 quoted or yours")
+    check_totals_match(r, "after a booked amount")
+    r.shot("v4-estimate-plan" + suffix)
+    assert_no_null_text(p)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--live", action="store_true", help="use the real model from .env")
-    ap.add_argument("--shots", default=str(ROOT.parent / "celebration-planner-notes" / "shots" / "v3"))
+    ap.add_argument("--shots", default=str(ROOT.parent / "celebration-planner-notes" / "shots" / "v4"))
     ap.add_argument("--axe", default="")
     ap.add_argument("--chrome", default=CHROME)
     args = ap.parse_args()
@@ -951,12 +1002,16 @@ def main() -> int:
                         mobile(r, dark)
                         if not dark:
                             edges(r)
+                    if only in ("", "v4"):
+                        v4_prices(r, dark)
                     if only in ("", "picker"):
                         area_picker(r, dark)
                     if only in ("", "guided"):
                         guided(r, dark)  # last: it asks for tours, which then stay on for this session
                 except Exception as exc:  # report and keep going so the summary is complete
-                    failures.append(f"{'dark' if dark else 'light'} flow: {exc}")
+                    import traceback
+                    traceback.print_exc()
+                    failures.append(f"{'dark' if dark else 'light'} flow: {exc!r}"[:2000])
                     r.shot("failure")
                 failures += r.errors
                 ctx.close()

@@ -157,7 +157,7 @@ def test_have_with_name_and_cost_counts_in_the_total(birthday):
     out = apply(birthday, {"op": "have", "stop": "cake", "name": "Aunt Meera's bakery", "cost": 1500})
     cake = stop(out["plan"], "cake")
     assert cake["status"] == "have" and cake["user_cost"] == 1500
-    assert any(r["after"] == "you have it: Aunt Meera's bakery · ₹1,500" for r in out["rows"])
+    assert any(r["after"] == "you have it: Aunt Meera's bakery · ₹1,500 (your number)" for r in out["rows"])
 
 
 def test_day_moments_move_skip_and_own(birthday):

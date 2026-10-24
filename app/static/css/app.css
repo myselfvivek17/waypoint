@@ -470,7 +470,7 @@ body:has(.sheetwrap) #view [data-next]{animation:none}
 .next h2{font-size:30px}
 .next p{margin:8px 0 18px}
 .tasks{list-style:none;padding:0;margin:0}
-.task{display:flex;gap:8px 14px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)}
+.task{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)}
 .task input{width:26px;height:26px;accent-color:var(--ink);flex:none;margin:9px}
 .task label{flex:1;min-height:44px;display:grid;align-content:center;cursor:pointer}
 .task.must .tt1::after{content:" · must-have";color:var(--saff);font-weight:700;font-size:14px}
@@ -478,6 +478,17 @@ body:has(.sheetwrap) #view [data-next]{animation:none}
 .tt2{font-size:14px;color:var(--muted)}
 .tt2.late{color:var(--danger);font-weight:700}
 .tcost{font-weight:600;white-space:nowrap}
+/* honest prices: an estimate is marked "≈ … Estimate"; quoted or the user's own number is firm */
+.ptag.price{font-weight:700;vertical-align:2px;cursor:help;border:1.5px solid transparent}
+.ptag.price.estimate{background:transparent;border-color:var(--line);color:var(--muted)}
+.ptag.price.quoted,.ptag.price.yours{background:var(--good);color:var(--cream)}
+.seg.f{background:var(--good)}
+.budlist .sw.f{background:var(--good)}
+.bamt{white-space:nowrap}
+.paidb{flex-basis:100%;margin-left:58px;text-align:left;font-size:15px;min-height:44px}
+.paidf{flex-basis:100%;display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 8px 58px}
+.paidf .flab{flex-basis:100%}
+.paidf .cin{flex:0 1 180px;min-height:44px}
 .brow{display:grid;grid-template-columns:120px minmax(0,1fr) auto;gap:12px;align-items:center;padding:6px 0}
 .brow .linkb{text-align:left;padding:0;justify-self:start}
 .btrack{height:14px;border-radius:8px;background:var(--sand);position:relative;overflow:hidden}

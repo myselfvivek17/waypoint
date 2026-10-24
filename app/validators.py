@@ -49,6 +49,17 @@ def drop_money(text: str) -> str:
     return " ".join(s for s in sentences(text) if not _MONEY.search(s))
 
 
+_CLAIM = re.compile(r"(?i)\b(?:is|are|it's|they're)\s+(?:still\s+)?available\b|\bavailab(?:le|ility)\s+(?:on|for)\s+(?:your|the)\s+"
+                    r"(?:date|day)|\b(?:confirmed|guaranteed)\s+(?:price|rate|booking|availability)|\bprice\s+is\s+confirmed|"
+                    r"\b(?:booked|reserved|held)\s+for\s+you\b")
+
+
+def drop_claims(text: str) -> str:
+    """Remove sentences that claim availability or a confirmed price: Waypoint never contacts a
+    vendor, so it cannot know either."""
+    return " ".join(s for s in sentences(text) if not _CLAIM.search(s))
+
+
 ASK_OFFERS = (("cheap", "Cheaper"), ("closer", "Closer"), ("vibe", "Different vibe"))
 
 
