@@ -446,3 +446,11 @@ def test_the_model_down_while_planning_still_gives_a_plan(live_llm, no_places):
     plan = r.json()
     assert r.status_code == 200 and plan["source"] != "ai" and len(plan["stops"]) >= 5
     assert all(s["rec"]["price"] > 0 for s in plan["stops"])
+
+
+@pytest.mark.parametrize("text, flagged", [("₹380-420 per plate", True), ("₹420 per plate for 30 guests, ₹12,600 in all", False),
+                                           ("₹40,000 all inclusive", False), ("Veg buffet ₹420 per plate. Live counter extra ₹3,000", False)])
+def test_a_quote_with_several_prices_is_flagged(plan, text, flagged):
+    """B29: "₹380-420 per plate" was read as ₹380 with nothing said (the README promises a flag)."""
+    row = quotes(plan, [{"vendor": "A", "text": text}])["rows"][0]
+    assert any("check which one is the price" in f for f in row["flags"]) == flagged, row["flags"]

@@ -360,6 +360,14 @@ def check(d: DraftQuote, q: QuoteIn, fallback: DraftQuote) -> DraftQuote:
             flags.append(f"This quote mentions {inr(said)} and {inr(price)}: check which one is the price.")
     else:
         price = said if said is not None and said in seen else None
+    if q.price is None and price is not None and not flags:
+        # "₹380-420 per plate": the plain reading took one of several prices; say so instead of picking quietly
+        main = sorted(x for x in amounts(re.sub(r"(?i)(?:extra|additional|plus|\+)\D*?\d[\d.]*\s*(?:k\b|lakhs?|thousand)?", "",
+                                                q.text or "")) if x >= 50)
+        g = fallback.guests
+        others = [x for x in main if x != price and not (g and (x == price * g or price == x * g))]
+        if others:
+            flags.append(f"This quote mentions {inr(others[0])} and {inr(price)}: check which one is the price.")
     guests = _num(d.guests)
     if guests is None or guests > 5000 or str(guests) not in low:
         guests = fallback.guests
