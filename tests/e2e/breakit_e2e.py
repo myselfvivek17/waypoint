@@ -323,6 +323,29 @@ def intake_says_why(r: E.Run) -> None:
     expect(p.locator(".evchips")).to_contain_text("30 guests", timeout=20000)
 
 
+def long_words_on_a_phone(r: E.Run, dark: bool) -> None:
+    """B28: one long unbroken "own words" venue made My plan 3,036 px wide and Invite 1,080 px at 390 px."""
+    p = r.page
+    r.step("breakit: a 160-character unbroken venue in your own words, at 390 px" + (" (dark)" if dark else ""))
+    p.set_viewport_size({"width": 390, "height": 844})
+    try:
+        E.open_sample(p, dark)
+        E.more(p, "text=Write my own")
+        p.locator("#view input[type=text]").first.fill("Ｗ" * 20 + "A" * 140)
+        p.keyboard.press("Enter")
+        p.wait_for_timeout(400)
+        for route in ("journey", "day", "plan", "invite", "chat"):
+            p.evaluate(f"location.hash = '{route}'")
+            p.wait_for_timeout(1500 if route == "invite" else 500)
+            sw = p.evaluate("document.documentElement.scrollWidth")
+            assert sw <= 391, f"{route} scrolls sideways with a long own-words venue ({sw}px)"
+        p.evaluate("location.hash = 'plan'")
+        p.wait_for_timeout(400)
+        r.shot("v4b-long-words-390" + ("-dark" if dark else ""), full=False)
+    finally:
+        p.set_viewport_size({"width": 1280, "height": 900})
+
+
 def run(r: E.Run, dark: bool) -> None:
     if not dark:  # storage handling does not depend on the theme
         corrupt_storage(r)
@@ -334,3 +357,4 @@ def run(r: E.Run, dark: bool) -> None:
         intake_says_why(r)
     hostile_text(r, dark)
     sizes_and_motion(r, dark)
+    long_words_on_a_phone(r, dark)

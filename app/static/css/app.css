@@ -476,6 +476,9 @@ body:has(.sheetwrap) #view [data-next]{animation:none}
 .task label{flex:1;min-height:44px;display:grid;align-content:center;cursor:pointer}
 .task.must .tt1::after{content:" · must-have";color:var(--saff);font-weight:700;font-size:14px}
 .tt1{font-weight:600}
+/* the user's own words can be one long unbroken string: break it rather than widen the page */
+.task label,.tones,.tone{min-width:0}
+.tt1,.next h2,.tone,.inv,.diff td,.guide,.lead,.h1{overflow-wrap:anywhere}
 .tt2{font-size:14px;color:var(--muted)}
 .tt2.late{color:var(--danger);font-weight:700}
 .tcost{font-weight:600;white-space:nowrap}
