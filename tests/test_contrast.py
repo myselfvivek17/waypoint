@@ -44,3 +44,25 @@ PAIRS = [
 @pytest.mark.parametrize("fg,bg", PAIRS)
 def test_text_contrast_is_aa(name, vars_, fg, bg):
     assert ratio(vars_[fg], vars_[bg]) >= 4.5, f"{name}: --{fg} on --{bg} is {ratio(vars_[fg], vars_[bg]):.2f}:1"
+
+
+def _rule_color(selector: str) -> str:
+    """The theme variable a rule's text colour uses, e.g. 'muted'."""
+    block = re.search(re.escape(selector) + r"\{([^}]*)\}", CSS).group(1)
+    return re.search(r"(?<![-\w])color:var\(--([\w-]+)\)", block).group(1)
+
+
+@pytest.mark.parametrize("name,vars_", [("light", LIGHT), ("dark", DARK)])
+def test_struck_before_column_stays_readable(name, vars_):
+    """The diff's Before column is struck through, so its text must still be AA on every surface it sits on."""
+    fg = _rule_color(".diff td:nth-child(2)")
+    for bg in ("cream", "paper", "sand"):
+        assert ratio(vars_[fg], vars_[bg]) >= 4.5, f"{name}: Before column --{fg} on --{bg}"
+
+
+@pytest.mark.parametrize("name,vars_", [("light", LIGHT), ("dark", DARK)])
+def test_v4b_labels_are_aa(name, vars_):
+    """The "Recommended" tag, the preview warning and "You asked"."""
+    for sel, bg in ((".rectag", "mari"), (".warnline", "sand"), (".asked", "cream"), (".asked", "paper")):
+        fg = _rule_color(sel)
+        assert ratio(vars_[fg], vars_[bg]) >= 4.5, f"{name}: {sel} --{fg} on --{bg}"

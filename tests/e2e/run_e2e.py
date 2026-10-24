@@ -1018,6 +1018,27 @@ def diff_rows(p: Page) -> dict:
         [tr.cells[0].textContent, [tr.cells[1].textContent, tr.cells[2].textContent]]))""")
 
 
+CONTRAST_JS = """(sel) => {
+    const rgb = (c) => (c.match(/[\\d.]+/g) || []).map(Number);
+    const lum = ([r, g, b]) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+        return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
+    const bgOf = (e) => { for (; e; e = e.parentElement) { const c = rgb(getComputedStyle(e).backgroundColor);
+        if (c.length === 3 || (c.length === 4 && c[3] > 0.9)) return c; } return [255, 255, 255]; };
+    return [...document.querySelectorAll(sel)].map((e) => { const a = lum(rgb(getComputedStyle(e).color)), b = lum(bgOf(e));
+        return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05); }); }"""
+
+
+def v4b_readable(p: Page, where: str) -> None:
+    """The struck-through Before column is AA (4.5:1) and budget labels sit on one line, at this width and theme."""
+    worst = min(p.evaluate(CONTRAST_JS, ".diff tbody td:nth-child(2)"))
+    assert worst >= 4.5, f"{where}: struck Before text at {worst:.2f}:1"
+    lines = p.evaluate("""() => [...document.querySelectorAll('.brow .linkb')].map((b) => {
+        const r = document.createRange(); r.selectNodeContents(b.firstChild);
+        return [b.firstChild.textContent, r.getClientRects().length]; })""")
+    assert all(n == 1 for _, n in lines), f"{where}: a budget label wraps {lines}"
+    print(f"  readable ({where}): Before column {worst:.2f}:1, {len(lines)} budget labels on one line")
+
+
 def v4_revision(r: Run, dark: bool) -> None:
     """Item 2: the explainer's sentence on the Aditya plan -> one diff -> a way out -> apply -> plan updated."""
     p = r.page
@@ -1054,6 +1075,7 @@ def v4_revision(r: Run, dark: bool) -> None:
     expect(p.locator("#diff-warn")).to_contain_text("With these changes the numbers don't work yet")
     assert p.evaluate("""() => { const w = document.getElementById('diff-warn').getBoundingClientRect(),
         t = document.querySelector('.diff').getBoundingClientRect(); return w.bottom <= t.top + 1; }"""), "warning not by the preview"
+    v4b_readable(p, "revision diff" + suffix)
     r.shot("v4-revision-diff" + suffix)
     p.locator(".ways-out .way").first.click()
     expect(p.locator(".ways-out")).to_have_count(0, timeout=40000)
@@ -1190,6 +1212,7 @@ def v4_mobile(r: Run, dark: bool) -> None:
         p.click("#view button >> text=Show me")
         expect(p.locator(".ways-out")).to_be_visible(timeout=40000)
         fits("revision diff")
+        v4b_readable(p, "revision diff at 390 px" + suffix)
         p.locator("#diff-h").scroll_into_view_if_needed()
         r.shot("v4-mobile-revision" + suffix)
         p.click("#view button >> text=Keep as it is")

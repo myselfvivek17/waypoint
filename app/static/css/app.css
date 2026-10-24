@@ -490,15 +490,16 @@ body:has(.sheetwrap) #view [data-next]{animation:none}
 .paidf{flex-basis:100%;display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 8px 58px}
 .paidf .flab{flex-basis:100%}
 .paidf .cin{flex:0 1 180px;min-height:44px}
-.brow{display:grid;grid-template-columns:120px minmax(0,1fr) auto;gap:12px;align-items:center;padding:6px 0}
-.brow .linkb{text-align:left;padding:0;justify-self:start}
+.brow{display:grid;grid-template-columns:150px minmax(0,1fr) auto;gap:12px;align-items:center;padding:6px 0}
+.brow .linkb{text-align:left;padding:0;justify-self:start;max-width:100%;overflow-wrap:anywhere}
 .btrack{height:14px;border-radius:8px;background:var(--sand);position:relative;overflow:hidden}
 .bplan{position:absolute;inset:0 auto 0 0;background:var(--bplan);transition:width .8s ease}
 .bspent{position:absolute;inset:0 auto 0 0;background:var(--ink);transition:width .8s ease}
 .diff{width:100%;border-collapse:collapse;margin-top:14px;font-size:15px}
 .diff th{text-align:left;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:6px 8px}
 .diff td{padding:8px;border-top:1px solid var(--line);vertical-align:top}
-.diff td:nth-child(2){color:var(--muted);text-decoration:line-through}
+/* struck through but still readable: --muted text (AA in both themes) with a thin strike in --dash */
+.diff td:nth-child(2){color:var(--muted);text-decoration:line-through 1px var(--dash)}
 .asked{margin:14px 0 0;color:var(--muted);max-width:70ch;overflow-wrap:anywhere}
 .asked q{color:var(--ink);font-weight:600}
 .warnline{margin:8px 0 0;padding:8px 12px;border-left:4px solid var(--mari);background:var(--sand);color:var(--ink);font-weight:600;max-width:70ch}
@@ -589,7 +590,9 @@ body:has(.sheetwrap) #view [data-next]{animation:none}
  .nav{grid-column:1/-1;grid-row:2;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;margin:0 -20px;padding:0 20px 2px}
  .nav::-webkit-scrollbar{display:none}
  .navb{flex:none}
- .brow{grid-template-columns:90px minmax(0,1fr) auto}
+ /* phones: the stop name on its own line above its bar, so "Day-of schedule" never breaks mid-name */
+ .brow{grid-template-columns:minmax(0,1fr) auto;gap:2px 12px}
+ .brow .linkb{grid-column:1/-1}
  .drow,.drow.editing{grid-template-columns:minmax(0,1fr)}
  .drow dt{font-size:14px}
  body{font-size:16px}
