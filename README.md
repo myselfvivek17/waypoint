@@ -49,7 +49,7 @@ quotes you paste** — it never contacts anyone or claims availability.
 
 While the AI works, a calm full-screen overlay shows the journey motif drawing itself and one line
 saying what is happening ("Finding cafés and restaurants around Gachibowli…", "Re-planning without a
-cake…"). State lives in the browser (localStorage) and is restored on reload. The server stores nothing.
+cake…"). State lives in the browser (localStorage) and is restored on reload, checked part by part (a corrupt value starts that part fresh and says so); two tabs on one plan stay in step. The server stores nothing.
 
 ## Guided by design
 
@@ -124,10 +124,18 @@ nothing starts from scratch:
   the monsoon swaps an open-air venue for a covered one; a new budget squeezes **only undecided stops**.
   Decided, booked and quoted stops stay — and the diff says which were kept.
 - **One diff** covers guests, budget, date, per-guest figure, days to go, book-by dates moved, changed stops
-  and **newly urgent tasks** ("Book the venue: late, do it today"), plus *What I kept, changed and assumed*.
+  and **newly urgent tasks** named after the *new* picks ("Order the decor: Marigold and fairy lights"), plus
+  *What I kept, changed and assumed*; beyond four urgent rows a plain note says how many more. Above it,
+  *You asked: "…"* keeps the request in view, and while the preview is open the page lead talks about the
+  preview, not the plan beside it.
+- **Numbers that can't be used are refused out loud**, never quietly rounded: "budget to 0", "0 guests",
+  "cut the budget by 150%", a date that has passed or "100000 more guests" say why (and what was kept);
+  "200% more budget" is three times the budget; two different guest changes in one sentence say which one
+  was used; a vendor quote chosen for the old head count is called out ("ask them to re-quote for 50").
 - **Impossible numbers** (below the rules' per-guest floor) show the same **"Let's make this work"** ways as
-  intake — *Keep ₹36,000, invite 60* · *Keep 80 guests, raise to ₹48,000* · *Go potluck* — each re-run as
-  part of the same revision.
+  intake — *Keep ₹36,000, invite 60* (labelled **Recommended** in words) · *Keep 80 guests, raise to ₹48,000*
+  · *Go potluck* — each re-run as part of the same revision. A token budget (₹1) gets only the two ways that
+  make sense.
 - **Over budget but possible** → **Where should the money go?** Tap what matters most, in order (food, venue,
   decor, photos, cake & entertainment). `tradeoffs.py` works out 2–3 concrete options — *protect your
   priorities*, *protect only the top one*, *keep every choice and invite fewer* — each closing the gap with the
@@ -148,7 +156,9 @@ Waypoint never contacts a vendor, so it never presents a price as confirmed:
 The budget line splits them everywhere ("Planned ₹39,200 of ₹40,000 (₹23,600 estimated, ₹15,600 quoted or
 yours)"), the budget bar colours firm amounts, the diff marks each side, and booked or quoted stops are never
 swapped by a revision or a trade-off. `prices.py` and `model.js` share one rule for where a price comes from;
-model prose that claims availability or a "confirmed price" is dropped by a validator.
+model prose that claims availability or a "confirmed price" is dropped by a validator. Estimates stop growing at twice the
+"generous" per-guest figure for the event and city: ₹10 crore for 30 guests is planned at about ₹1.8 lakh and the
+rest is said to stay spare, never a ₹40 lakh WhatsApp invite.
 
 ## Working with vendors
 
@@ -383,11 +393,12 @@ appears instead of a stand-in. Map data © OpenStreetMap contributors (ODbL).
 
 ## Testing
 
-`pytest` — **509 tests**, fully offline (mock model, `respx` for HTTP):
+`pytest` — **723 tests**, fully offline (mock model, `respx` for HTTP):
 
 | File | What it covers |
 |---|---|
-| `test_revise.py` (48) | The **parser table** (28 phrasings: 35k, ₹1.5 lakh, "thirty-two thousand", cut 20%, +50 people, 2 weeks earlier, on 1 Nov…), the explainer's sentence as **one diff** with per-guest, days to go and newly urgent tasks, impossible → ways out re-run with the revision, decided / booked / quoted stops kept, a broken venue-capacity rule overriding a decision, date move recomputing every deadline, Details edits = the same revision, the model asked only about unread clauses |
+| `test_breakit.py` (203) | **Adversarial QA (v4b)**, one test per finding: intake answers like 0 / 100000 / -5 guests, -5000, "fifty thousand", today, next Sunday, 29 Feb, Hinglish/Hindi/Telugu head counts, and *why* a question comes back; lavish budgets (₹10 crore) and one guest; revisions that must be refused with a reason; a live model returning empty, invalid, NaN, huge, extra-field or injected replies; quote talk vs included items, amounts in words, ranges flagged; every endpoint answering bad bodies with a 4xx, 413 for oversized and chunked bodies, 429 after a burst; trade-off edges and their applied totals |
+| `test_revise.py` (50) | The **parser table** (28 phrasings: 35k, ₹1.5 lakh, "thirty-two thousand", cut 20%, +50 people, 2 weeks earlier, on 1 Nov…), the explainer's sentence as **one diff** with per-guest, days to go and newly urgent tasks, impossible → ways out re-run with the revision, decided / booked / quoted stops kept, a broken venue-capacity rule overriding a decision, date move recomputing every deadline, Details edits = the same revision, the model asked only about unread clauses |
 | `test_prices.py` (19) | Where a price comes from (estimate / your number / quoted / booked), the labels, availability claims dropped, the diff marking estimates, quotes and booked amounts in the totals |
 | `test_vendors.py` (14) | Questions cover the event and every must-have, model questions checked, quote reading and maths, invented amounts and items rejected, **prompt injection stays data and no markup is echoed**, length limits, a chosen quote flowing into the budget (LLM mocked) |
 | `test_tradeoffs.py` (9) | Options close the gap and their totals are exact when applied, priorities protected, least sacrifice (not an even cut), fewer guests, booked stops never offered, the model only rewords |
@@ -395,10 +406,10 @@ appears instead of a stand-in. Map data © OpenStreetMap contributors (ODbL).
 | `test_validators.py` (77) | Budget always ≤ total after fixing, rounding, dates, caps, no amounts or wrong place kinds in prose |
 | `test_llm.py` (40) | Free-model enforcement, cost check, empty reply → next model in the chain → fallback, cache, deadline, injection stays data |
 | `test_choices.py` (39) | **I don't want cake, already have a poojari, cook at home, add a photographer, skip invites**, cascades, validation of model operations, booked stops, moments, parser phrasings, temples, invite clean-up |
-| `test_contrast.py` (38) | WCAG AA contrast for text colours in both themes |
+| `test_contrast.py` (42) | WCAG AA contrast for text colours in both themes, the struck-through *Before* column and the v4b labels |
 | `test_intake.py` (35) | Parsing, one question at a time, blocks, *What I understood*, first insights |
-| `test_api.py` (33) | chat → plan → adjust, 409 blocks, 413, 422, 429, security headers, `.ics`, rules-parser fallback |
-| `test_places.py` (44) | Invented place ids rejected, empty Overpass, **Overpass down → Nominatim places used** (venues and *Around the venue*), **both down → honest empty state**, **circuit breaker** skips a dead instance and retries it after the cool-down, the 8 s budget, Nominatim requests spaced out, the same place from two sources kept once, host allow list, Openverse parsing and caching, place-first photo order, Foursquare skip and matching |
+| `test_api.py` (34) | chat → plan → adjust, 409 blocks, 413, 422, 429, security headers, `.ics`, rules-parser fallback |
+| `test_places.py` (49) | Invented place ids rejected, empty Overpass, **Overpass down → Nominatim places used** (venues and *Around the venue*), **both down → honest empty state**, **circuit breaker** skips a dead instance and retries it after the cool-down, the 8 s budget, Nominatim requests spaced out, the same place from two sources kept once, host allow list, Openverse parsing and caching, place-first photo order, Foursquare skip and matching |
 | `test_guidance.py` (24) | The choice line: the model's question kept only when safe (one question, an "or", no amounts or numbers, only real alternatives), the rules' fallback for every stop and alternative |
 | `test_location.py` (9) | India-only geocoding, reverse lookup rounded and uncached, POST-only, position never sent to the model |
 | `test_area_picker.py` (9) | *Which Meerpet?*: mocked Nominatim with the real Meerpet hits gives two options (mandal, district, pincode) and no venue search; a single clear area gives no picker and no second lookup; clinics and buildings filtered out; a district isn't a second choice beside its city; far namesakes ignored; the pick is the search centre; CSP allows OSM tiles only |
@@ -424,8 +435,13 @@ invite 60* → apply → plan, details and totals updated; a budget edit on Deta
 re-planning; *Where should the money go?* with ranked priorities → an option → fits; vendor questions with
 the Jain must-have, two pasted quotes compared, one chosen as *Quoted*; and those screens again at 390 px with
 no sideways scrolling; asserts no page or console errors;
+then the **v4b break-it checks** (`tests/e2e/breakit_e2e.py`): corrupt localStorage on every route, two tabs on
+one plan, markup and injections typed everywhere (a dialog handler proves nothing runs), a 160-character own-words
+venue at 390 px, keyboard only from welcome to an applied revision and the invite, places / photos / plan /
+revision failures and offline, 390 px / 1440 px / 200 % zoom with reduced motion and the tour on each screen,
+a chosen quote through a revision and the stop's removal with task costs = budget bars = budget line;
 optionally runs axe-core. Mock model by default or the real one (`--live`). `WP_E2E_ONLY=guided` (or `picker`,
-`v4`) runs just that part.
+`v4`, `breakit`) runs just that part.
 
 ## Assumptions and limits
 
