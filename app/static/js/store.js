@@ -23,7 +23,7 @@ function initial() {
     welcomeDraft: '', draft: '', err: '', editing: null, editDraft: '', busy: false,
     sheet: false, why: false, change: false, changeDraft: '', changeMsg: '', slide: 0,
     planning: false, adjDraft: '', adjMsg: '', adjSource: null, diff: null, inviteShown: false, online: navigator.onLine !== false,
-    demo: {}, serverToday: null, llmMode: null, photos: {}, nearby: {},
+    demo: {}, serverToday: null, llmMode: null, notice: '', photos: {}, nearby: {},
     locBusy: false, locMsg: '', areaCheck: null,
     choiceForm: null, choiceNote: '', choiceCost: '', choiceMsg: '', confirmRemove: null, addOpen: false, addDraft: '',
     dayForm: null, dayDraft: '', dayAlts: null, adjSuggest: null, menu: null, modesFor: null, paidFor: null, paidDraft: '', trade: null, vendor: null,
@@ -32,15 +32,72 @@ function initial() {
 
 export const state = initial();
 
+// ------------------------------------------------------------------ what a saved value must look like
+// Storage can be edited, half-written or left by an older version: each part is checked before use and
+// a part that doesn't fit is dropped (never rendered half-broken).
+const obj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+const str = (v) => typeof v === 'string';
+const num = (v) => typeof v === 'number' && Number.isFinite(v);
+const okOption = (o) => obj(o) && str(o.id) && str(o.name) && num(o.price);
+const okStop = (s) => obj(s) && str(s.key) && str(s.label) && okOption(s.rec) && Array.isArray(s.options) && s.options.every(okOption);
+const okDay = (d) => obj(d) && str(d.title) && Array.isArray(d.items) && d.items.every((it) => obj(it) && str(it.id) && str(it.title));
+export function okPlan(p) {
+  return obj(p) && str(p.title) && obj(p.profile) && str(p.invite) && Array.isArray(p.stops) && p.stops.every(okStop)
+    && Array.isArray(p.days) && p.days.length > 0 && p.days.every(okDay)
+    && Array.isArray(p.tasks) && p.tasks.every((t) => obj(t) && str(t.id) && str(t.text));
+}
+const ROUTE_NAMES = ['welcome', 'chat', 'journey', 'day', 'plan', 'invite'];
+const VIEWS = ['path', 'map', 'list'];
+
+function cleanJourney(j) {
+  const f = freshJourney();
+  if (!obj(j)) return f;
+  return Object.assign(f, {
+    stopIdx: Number.isInteger(j.stopIdx) && j.stopIdx >= 0 ? j.stopIdx : 0,
+    decided: obj(j.decided) ? j.decided : {}, chosen: obj(j.chosen) ? j.chosen : {}, updated: obj(j.updated) ? j.updated : {},
+    ripples: Array.isArray(j.ripples) ? j.ripples.filter((r) => obj(r) && str(r.stop)) : [],
+    view: VIEWS.includes(j.view) ? j.view : 'path', nearby: j.nearby === true, pin: obj(j.pin) ? j.pin : null,
+  });
+}
+
+function cleanChat(c) {
+  const f = freshChat();
+  if (!obj(c)) return f;
+  return Object.assign(f, c, {
+    transcript: Array.isArray(c.transcript) ? c.transcript.filter(obj) : [], chips: Array.isArray(c.chips) ? c.chips.filter(str) : [],
+    reply: str(c.reply) ? c.reply : '', ask: str(c.ask) ? c.ask : null, placeholder: str(c.placeholder) ? c.placeholder : '',
+    block: obj(c.block) && Array.isArray(c.block.ways) ? c.block : null, done: c.done === true,
+    remaining: Number.isInteger(c.remaining) ? c.remaining : 0,
+  });
+}
+
+/** The saved state, part by part; returns false when something had to be dropped. */
+function restore(saved) {
+  let whole = true;
+  const drop = () => { whole = false; };
+  state.route = ROUTE_NAMES.includes(saved.route) ? saved.route : (('route' in saved) && drop(), 'welcome');
+  state.profile = obj(saved.profile) ? saved.profile : (('profile' in saved) && drop(), {});
+  state.chat = cleanChat(saved.chat);
+  if (okPlan(saved.plan)) state.plan = saved.plan;
+  else if (saved.plan != null) drop();
+  state.j = cleanJourney(saved.j);
+  state.ticks = obj(saved.ticks) ? saved.ticks : {};
+  state.dayTab = Number.isInteger(saved.dayTab) && saved.dayTab >= 0 ? saved.dayTab : 0;
+  state.planDirty = saved.planDirty === true && !!state.plan;
+  state.inv = obj(saved.inv) ? saved.inv : null;
+  if (!state.plan && ['journey', 'day', 'plan', 'invite'].includes(state.route)) state.route = 'welcome';
+  return whole;
+}
+
 export function load() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(KEY) || 'null');
-    if (saved && typeof saved === 'object') {
-      for (const k of DURABLE) if (k in saved) state[k] = saved[k];
-      state.j = Object.assign(freshJourney(), state.j || {});
-      state.chat = Object.assign(freshChat(), state.chat || {});
-    }
-  } catch (e) { /* corrupt or blocked storage: start fresh */ }
+  let raw = null;
+  try { raw = localStorage.getItem(KEY); } catch (e) { return; /* blocked storage: start fresh */ }
+  if (raw == null) return;
+  let saved = null;
+  try { saved = JSON.parse(raw); } catch (e) { /* half-written or edited: below */ }
+  if (!obj(saved) || !restore(saved)) {
+    state.notice = "I couldn't read everything saved on this device, so part of it starts fresh.";
+  }
 }
 
 export function save() {

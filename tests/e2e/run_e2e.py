@@ -1283,6 +1283,9 @@ def main() -> int:
                         v4_mobile(r, dark)
                     if only in ("", "picker"):
                         area_picker(r, dark)
+                    if only in ("", "breakit"):
+                        import breakit_e2e
+                        breakit_e2e.run(r, dark)
                     if only in ("", "guided"):
                         guided(r, dark)  # last: it asks for tours, which then stay on for this session
                 except Exception as exc:  # report and keep going so the summary is complete

@@ -8,7 +8,7 @@ import { inviteView } from './invite.js';
 import { journeyView, sheetView } from './journey.js';
 import { discardDetailEdits, load, resetAll, state } from './store.js';
 import { afterRender, initTours, startTour } from './tour.js';
-import { cancelTimers, go, onRender, ROUTES, stopThinking } from './ui.js';
+import { cancelTimers, go, onRender, ROUTES, say, stopThinking } from './ui.js';
 
 const NAV = [['chat', 'Details'], ['journey', 'Journey'], ['day', 'Event day'], ['plan', 'My plan'], ['invite', 'Invite']];
 let shownRoute = null;
@@ -162,6 +162,7 @@ async function boot() {
   const health = await api.health();
   if (health.ok) { state.serverToday = health.data.today; state.llmMode = health.data.llm; }
   render({ focus: null });
+  if (state.notice) { say(state.notice); state.notice = ''; }  // saved state that could not be used, said once
   if (demo && ['budget', 'date', 'offline', 'nophoto'].includes(demo)) {
     startDemo(demo);
   }
