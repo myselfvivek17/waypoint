@@ -526,7 +526,10 @@ class RulesResult:
         labels = dict(STOPS[p.type])
         share = self.split.get(key, 0)
         parts = []
-        if p.budget:
+        if p.budget and share < SPLIT[p.type].get(key, 0) - 1e-9:  # sized below its share: the budget is lavish
+            parts.append(f"Rule: {labels.get(key, key)} is sized at about {inr(p.budget * share)}, what a lavish "
+                         f"{p.type} needs; the rest of your budget stays spare.")
+        elif p.budget:
             parts.append(f"Rule: {labels.get(key, key)} gets about {round(share * 100)}% of the budget "
                          f"({inr(p.budget * share)}), with {round(BUFFER * 100)}% kept spare.")
         if key == "venue":
@@ -547,9 +550,30 @@ class RulesResult:
         return " ".join(parts)
 
 
+LAVISH = 2  # estimates stop growing at twice the "generous" per-guest figure; the rest stays spare
+
+
+def planned_split(p: Profile) -> tuple[dict[str, float], int | None]:
+    """The budget shares the estimates are sized from, and the most worth planning for when the budget
+    is far beyond what the event needs (₹10 crore for 30 guests must not make a WhatsApp invite cost
+    ₹40 lakh, nor one guest's dinner ₹14,400). None when the whole budget is used."""
+    split = dict(SPLIT[p.type])
+    if not p.guests or not p.budget:
+        return split, None
+    ceiling = p.guests * PER_GUEST[p.type][city_tier(p.area)][2] * LAVISH
+    if p.budget <= ceiling:
+        return split, None
+    ratio = ceiling / p.budget
+    return {k: v * ratio for k, v in split.items()}, ceiling
+
+
 def evaluate(p: Profile, today: dt.date) -> RulesResult:
     """Run every rule family over the profile."""
     band, b_ins = budget_band(p)
+    split, ceiling = planned_split(p)
+    if ceiling and b_ins is not None:
+        b_ins = b_ins.model_copy(update={"why": f"{b_ins.why} I sized the estimates for about {inr(ceiling)} "
+                                                f"({inr(ceiling // p.guests)} a guest); the rest of your budget stays spare."})
     level, order, late, t_ins = urgency(p, today)
     flags, s_ins = season(p)
     venue, catering, z_ins = size(p)
@@ -560,5 +584,5 @@ def evaluate(p: Profile, today: dt.date) -> RulesResult:
         tier=city_tier(p.area), per_guest=(p.budget // p.guests) if p.guests and p.budget is not None else None,
         band=band, days_left=days_until(p.date, today), urgency=level, book_order=order, late=late,
         season=flags, venue_size=venue, catering=catering, mandatory=mandatory,
-        split=dict(SPLIT[p.type]), lead=dict(LEAD[p.type]), insights=insights, blocks=blocks,
+        split=split, lead=dict(LEAD[p.type]), insights=insights, blocks=blocks,
     )

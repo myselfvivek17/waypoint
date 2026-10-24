@@ -91,3 +91,34 @@ def test_a_token_budget_gets_honest_ways_out(budget):
     assert [w["title"] for w in block["ways"]][-1] == "Keep both, go potluck" and len(block["ways"]) == 2
     assert all("₹0" not in w["detail"] for w in block["ways"])
     assert "two ways" in block["body"]
+
+
+# ---------------------------------------------------------------- B07 lavish budgets and tiny parties
+
+def _plan(**kw) -> dict:
+    r = client.post("/api/plan", json={"profile": {**BASE, **kw}})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _line(s: dict, guests: int) -> int:
+    return s["rec"]["price"] * (guests if s["rec"]["per_guest"] else 1)
+
+
+@pytest.mark.parametrize("guests, budget, per_guest_max", [(30, 100_000_000, 6000), (1, 40000, 6000), (2, 5_000_000, 6000)])
+def test_estimates_stop_at_a_lavish_ceiling(no_places, guests, budget, per_guest_max):
+    """B07: ₹10 crore for 30 guests priced a WhatsApp invite at ₹40 lakh; one guest's food at ₹14,400."""
+    plan = _plan(guests=guests, budget=budget)
+    total = sum(_line(s, guests) for s in plan["stops"])
+    assert total <= guests * per_guest_max, total
+    invites = next(s for s in plan["stops"] if s["key"] == "invites")
+    assert invites["rec"]["price"] <= 20000
+    venue = next(s for s in plan["stops"] if s["key"] == "venue")
+    assert "the rest of your budget stays spare" in venue["rule"] and "0% of the budget" not in venue["rule"]
+    assert any("stays spare" in i["why"] for i in plan["insights"])
+
+
+def test_an_ordinary_budget_is_still_shared_out_in_full(no_places):
+    plan = _plan()
+    assert "% of the budget" in next(s for s in plan["stops"] if s["key"] == "venue")["rule"]
+    assert not any("stays spare" in i["why"] for i in plan["insights"])
