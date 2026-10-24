@@ -1046,6 +1046,8 @@ def v4_revision(r: Run, dark: bool) -> None:
     expect(p.get_by_role("button", name=re.compile(r"^Recommended Keep ₹36,000"))).to_have_count(1)
     expect(p.locator("#view")).not_to_contain_text("the one I would choose")
     # v4b: while the preview is open the page talks about the preview, never "Nothing is late" beside it
+    expect(p.locator("#diff-asked")).to_have_text("You asked: " + EXPLAINER)
+    assert p.locator("#diff-asked").evaluate("(e) => e.compareDocumentPosition(document.getElementById('diff-h'))") & 4
     expect(p.locator("#plan-lead")).to_contain_text("preview of a change")
     expect(p.locator("#plan-lead")).not_to_contain_text("Nothing is late")
     expect(p.locator("#guide")).to_contain_text("With these changes the numbers don't work yet")
@@ -1056,6 +1058,7 @@ def v4_revision(r: Run, dark: bool) -> None:
     p.locator(".ways-out .way").first.click()
     expect(p.locator(".ways-out")).to_have_count(0, timeout=40000)
     assert diff_rows(p)["Guests"] == ["30", "60"]
+    expect(p.locator("#diff-asked")).to_contain_text(EXPLAINER)  # still the user's words after a way out
     assert one_next_step(p, "the revision after a way out") == "Apply changes"
     r.shot("v4-revision-way" + suffix, full=False)
     p.click("#view button >> text=Apply changes")

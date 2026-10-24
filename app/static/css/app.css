@@ -499,6 +499,8 @@ body:has(.sheetwrap) #view [data-next]{animation:none}
 .diff th{text-align:left;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:6px 8px}
 .diff td{padding:8px;border-top:1px solid var(--line);vertical-align:top}
 .diff td:nth-child(2){color:var(--muted);text-decoration:line-through}
+.asked{margin:14px 0 0;color:var(--muted);max-width:70ch;overflow-wrap:anywhere}
+.asked q{color:var(--ink);font-weight:600}
 .warnline{margin:8px 0 0;padding:8px 12px;border-left:4px solid var(--mari);background:var(--sand);color:var(--ink);font-weight:600;max-width:70ch}
 .explain{margin-top:12px}
 .explain .flab{margin:0}

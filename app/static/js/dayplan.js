@@ -115,7 +115,7 @@ async function runSuggestion(sug) {
   const r = await api.apply(planBody({ ops: [sug.op] }));
   stopThinking();
   if (!r.ok || !r.data.understood) { update({ busy: false, adjMsg: r.ok ? r.data.note : errorText(r) }); return; }
-  update({ busy: false, diff: Object.assign({ request: sug.request }, r.data), adjSource: 'rules' }, { focus: 'diff-h' });
+  update({ busy: false, diff: Object.assign({ request: sug.request, asked: sug.request }, r.data), adjSource: 'rules' }, { focus: 'diff-h' });
   announce(`${r.data.title}. ${r.data.note}`);
 }
 
@@ -133,7 +133,7 @@ async function runAdjust(text) {
     announce(r.data.note + (r.data.suggest_text ? ' ' + r.data.suggest_text : ''));
     return;
   }
-  update({ busy: false, diff: Object.assign({ request }, r.data), adjDraft: '', adjSource: r.data.source }, { focus: 'diff-h' });
+  update({ busy: false, diff: Object.assign({ request, asked: request }, r.data), adjDraft: '', adjSource: r.data.source }, { focus: 'diff-h' });
   announce(`${r.data.title}. ${r.data.note}`);
 }
 
@@ -146,7 +146,7 @@ async function runWay(w) {
   const r = await api.apply(planBody({ ops: w.ops }));
   stopThinking();
   if (!r.ok || !r.data.understood) { update({ busy: false, adjMsg: r.ok ? r.data.note : errorText(r) }, { focus: 'adj-msg' }); return; }
-  update({ busy: false, diff: Object.assign({ request: d.request }, r.data) }, { focus: 'diff-h' });
+  update({ busy: false, diff: Object.assign({ request: d.request, asked: d.asked }, r.data) }, { focus: 'diff-h' });
   announce(`${w.title}. ${r.data.note}`);
 }
 
@@ -201,7 +201,7 @@ async function useTrade(o) {
   const r = await api.apply(planBody({ ops }));
   stopThinking();
   if (!r.ok || !r.data.understood) { update({ busy: false, adjMsg: r.ok ? r.data.note : errorText(r) }, { focus: 'adj-msg' }); return; }
-  update({ busy: false, trade: null, diff: Object.assign({ request: d && t.base === 'diff' ? d.request : o.title }, r.data) }, { focus: 'diff-h' });
+  update({ busy: false, trade: null, diff: Object.assign(d && t.base === 'diff' ? { request: d.request, asked: d.asked } : { request: o.title }, r.data) }, { focus: 'diff-h' });
   announce(`${o.title}. ${r.data.note}`);
 }
 
@@ -317,7 +317,11 @@ function waysView(d) {
 
 function diffView(d) {
   const blocked = !!(d.ways && d.ways.length);
+  // what the user asked stays in view above its preview, in their own words
+  const asked = d.asked ? ['You asked: ', h('q', null, d.asked)]
+    : d.request === 'your new details' ? ['You changed your details.'] : d.request ? ['You chose: ' + d.request] : null;
   return h('div', { role: 'region', 'aria-labelledby': 'diff-h' },
+    asked ? h('p', { class: 'asked', id: 'diff-asked' }, ...asked) : null,
     h('h3', { class: 'disp h2', id: 'diff-h', tabindex: '-1', style: { fontSize: '22px' } }, d.title),
     blocked ? h('p', { class: 'warnline', id: 'diff-warn' }, "With these changes the numbers don't work yet. " +
       'The ways to make it work are under this preview.') : null,
