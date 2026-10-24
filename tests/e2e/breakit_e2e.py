@@ -132,11 +132,14 @@ def tradeoff_primary(r: E.Run) -> None:
         if p.locator("#pr-" + cat).count():
             p.click("#pr-" + cat)
     p.click("#view button >> text=Update the options")
-    expect(p.locator(".tradeo").first).to_contain_text("still", timeout=30000)
+    expect(p.locator(".tradeo").first).to_contain_text("Protect food, venue, decor", timeout=30000)
+    texts = p.locator(".tradeo").all_inner_texts()
+    first_fit = next(i for i, t in enumerate(texts) if "still over" not in t)
     best = p.locator(".tradeo.best")
     expect(best).to_have_count(1)
-    expect(best).not_to_contain_text("still over")
+    assert p.locator(".tradeo").nth(first_fit).get_attribute("class").endswith("best"), texts
     expect(best.locator("[data-next]")).to_have_count(1)
+    print("  primary trade-off is option", first_fit + 1, "of", len(texts))
     E.one_next_step(p, "trade-offs with every priority")
 
 
@@ -157,9 +160,47 @@ def two_tabs(r: E.Run) -> None:
     other.close()
 
 
+def quote_then_revise_then_remove(r: E.Run) -> None:
+    """B24: a quote chosen for 30 guests silently stayed after "20 more guests". Then the quoted stop is
+    removed: the totals must agree on every screen at each step."""
+    p = r.page
+    r.step("breakit: choose a quote, revise the guests, remove the quoted stop; totals agree throughout")
+    E.open_sample(p)
+    p.click("#ok-btn")
+    p.click("#ok-btn")
+    E.more(p, "#ch-vendor")
+    expect(p.locator(".vqs li").first).to_be_visible(timeout=30000)
+    p.click("#view button >> text=I have quotes: compare them")
+    for i, (name, price, text) in enumerate((E.QUOTE_A, E.QUOTE_B)):
+        p.fill(f"#vq-{i}-n", name)
+        p.fill(f"#vq-{i}-t", text)
+        if price:
+            p.fill(f"#vq-{i}-p", price)
+    p.click("#vq-go")
+    expect(p.locator(".vtable tbody tr")).to_have_count(2, timeout=40000)
+    p.click("#view button >> text=Choose Annapurna Caterers's quote")
+    E.check_totals_match(r, "quote chosen")
+    p.fill("#adj-in", "20 more guests")
+    p.click("#view button >> text=Show me")
+    expect(p.locator(".explain")).to_contain_text("re-quote for 50", timeout=30000)
+    total = E.diff_rows(p)["Total (includes estimates)"][1]
+    p.click("#view button >> text=Apply changes")
+    E.check_totals_match(r, "after a revision that kept the quote")
+    expect(p.locator("[data-budget-line]").first).to_contain_text(f"Planned {total} of")
+    p.click("nav >> text=Journey")
+    p.click("button.sg >> text=List")
+    p.locator(".slist button", has_text="Food").click()
+    E.more(p, "text=Remove stop")
+    p.click("#view button >> text=Remove the food")
+    expect(p.locator(".node .nl", has_text="Food")).to_have_count(0, timeout=30000)
+    E.check_totals_match(r, "after removing the quoted stop")
+    clean_text(p, "plan after removing the quoted stop")
+
+
 def run(r: E.Run, dark: bool) -> None:
     if not dark:  # storage handling does not depend on the theme
         corrupt_storage(r)
         two_tabs(r)
         tradeoff_primary(r)
+        quote_then_revise_then_remove(r)
     hostile_text(r, dark)

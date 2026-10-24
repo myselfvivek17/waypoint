@@ -838,6 +838,11 @@ async def _resize(c: Ctx, old: Profile, p: Profile) -> None:
         c.explain.append(f"The cake is resized for {c.guests} guests (about 1 kg for every 12).")
     elif cake is not None and cake.key in c.decided and cake.status == "open":
         c.explain.append(f"Your cake was sized for {old.guests}; ask the baker for one that serves {c.guests}.")
+    for s in c.plan.stops:  # a vendor's quote was for the old head count: it stays theirs, but say it is stale
+        if s.quote is not None and s.status == "open" and s.key not in c.booked:
+            c.explain.append(f"{s.quote.vendor}'s quote for the {s.label.lower()} ({inr(s.quote.price)}) was for "
+                             f"{old.guests} guests; ask them to re-quote for {c.guests}. Until then it stays at their number.")
+            c.touched.add(s.key)
     food = c.stop("food")
     if food is not None and food.key in c.decided and not c.locked(food) and c.current(food).per_guest:
         item = c.current(food)

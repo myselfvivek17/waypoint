@@ -3,6 +3,7 @@
 Every case here was a real failure once (see celebration-planner-notes/qa/v4b-breakit.md for the ids)."""
 
 import datetime as dt
+import json
 
 import pytest
 from fastapi.testclient import TestClient
@@ -343,3 +344,15 @@ def test_a_number_alone_is_not_a_head_count(plan, text):
 
 def test_add_guests_still_reads_with_a_guest_word(plan):
     assert adjust(plan, "please invite 5 more friends")["profile"]["guests"] == 35
+
+
+def test_a_quote_for_the_old_head_count_is_called_stale(plan):
+    """B24: after choosing a caterer's quote for 30, "20 more guests" kept ₹15,600 and said nothing."""
+    plan = json.loads(json.dumps(plan))
+    food = next(s for s in plan["stops"] if s["key"] == "food")
+    food["quote"] = {"vendor": "Annapurna Caterers", "price": 15600, "includes": ["serving staff"], "clarify": []}
+    out = adjust(plan, "20 more guests", decided=["food"])
+    assert out["profile"]["guests"] == 50
+    assert any("Annapurna Caterers's quote" in e and "was for 30 guests" in e and "re-quote for 50" in e for e in out["explain"])
+    booked = adjust(plan, "20 more guests", decided=["food"], booked=["food"])
+    assert not any("re-quote" in e for e in booked["explain"])  # booked: the user already settled it
