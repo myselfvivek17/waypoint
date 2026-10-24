@@ -197,8 +197,17 @@ def test_adjust_model_unknown_falls_back_to_the_rules_parser(plan, monkeypatch):
     async def unknown(*a, **k):
         return choices.llm.Result(choices.OpsDraft(ops=[], reply="Not sure."), "ai")
     monkeypatch.setattr(choices.llm, "ask", unknown)
+    r = client.post("/api/adjust", json={"plan": plan, "request": "skip the invites"}).json()
+    assert r["understood"] and r["source"] == "fallback"
+    assert next(s for s in r["plan"]["stops"] if s["key"] == "invites")["status"] == "skip"
+
+
+def test_guests_budget_and_date_are_read_by_code_before_the_model(plan, monkeypatch):
+    async def never(*a, **k):
+        raise AssertionError("the model should not be asked")
+    monkeypatch.setattr(choices.llm, "ask", never)
     r = client.post("/api/adjust", json={"plan": plan, "request": "add 15 guests"}).json()
-    assert r["understood"] and r["profile"]["guests"] == 45 and r["source"] == "fallback"
+    assert r["understood"] and r["profile"]["guests"] == 45 and r["source"] == "rules"
 
 
 def test_adjust_replan_keeps_guest_counts_in_prose(plan):

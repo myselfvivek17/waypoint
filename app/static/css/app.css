@@ -498,6 +498,11 @@ body:has(.sheetwrap) #view [data-next]{animation:none}
 .diff th{text-align:left;font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:6px 8px}
 .diff td{padding:8px;border-top:1px solid var(--line);vertical-align:top}
 .diff td:nth-child(2){color:var(--muted);text-decoration:line-through}
+.explain{margin-top:12px}
+.explain .flab{margin:0}
+.explain ul{margin:4px 0 0;padding-left:20px;display:grid;gap:4px;max-width:70ch}
+.ways-out .ways{margin-top:12px}
+.ways-out .step{margin:0 0 4px}
 .inv{margin-top:14px;padding:14px;border-radius:14px;background:var(--paper);border:1.5px solid var(--line);white-space:pre-wrap}
 .notes{margin:18px 0 0;padding:0;list-style:none;color:var(--muted);font-size:14px;display:grid;gap:4px}
 

@@ -5,7 +5,7 @@ import { landscape, mapBase, noPhotoIcon, toneArt } from './art.js';
 import { h, inr, s, safeUrl } from './dom.js';
 import { chipDefs } from './intake.js';
 import { allOptions, budgetLine, lineTotal, maxReach, nextIndex, priceSays, priceText, stopsModel, summary } from './model.js';
-import { applyAdjustment, chooseOption, confirmStop, setStopStatus, state } from './store.js';
+import { applyAdjustment, chooseOption, confirmStop, planBody, setStopStatus, state } from './store.js';
 import { moreMenu } from './menu.js';
 import { tourOpen } from './tour.js';
 import { announce, empty, go, guide, later, priceTag, priceWithTag, primary, rerender, say, stopThinking, think, update } from './ui.js';
@@ -220,8 +220,7 @@ const ADD_SUGGESTIONS = ['Photographer', 'Mehendi artist', 'Return gifts', 'DJ &
     server by the rules, then adopted through the store like any other adjustment. */
 async function runOps(ops, line) {
   think(line);
-  const booked = state.plan.stops.map((s) => s.key).filter((k) => state.ticks[k]);
-  const r = await api.apply({ plan: state.plan, chosen: state.j.chosen, ripples: state.j.ripples, booked, ops });
+  const r = await api.apply(planBody({ ops }));
   stopThinking();
   if (!r.ok) { say(errorText(r)); return null; }
   if (!r.data.understood) { say(r.data.note); return null; }

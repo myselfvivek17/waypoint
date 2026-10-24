@@ -2,6 +2,7 @@
 import { api, errorText } from './api.js';
 import { daysBetween, h, inr, longDate, parseISO, shortDate } from './dom.js';
 import { budgetLine, summary } from './model.js';
+import { reviseFromDetails } from './dayplan.js';
 import { adoptPlan, discardDetailEdits, freshChat, freshJourney, state } from './store.js';
 import { pinIcon } from './art.js';
 import { pinMap, viewFor } from './pinmap.js';
@@ -407,18 +408,34 @@ function questionView(c) {
     state.err ? h('p', { class: 'err', id: 'a-err', role: 'alert' }, state.err) : null);
 }
 
+const REVISABLE = ['guests', 'budget', 'date'];
+
+/** The details that changed since the plan was made, when they are only guests, budget or date: those
+    are revised in place (decisions kept, deadlines recomputed). Anything else needs a fresh plan. */
+function revisable() {
+  const a = state.profile, b = state.plan && state.plan.profile;
+  if (!b || !state.planDirty) return null;
+  const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])]
+    .filter((k) => JSON.stringify(a[k] ?? null) !== JSON.stringify(b[k] ?? null));
+  return keys.length && keys.every((k) => REVISABLE.includes(k)) ? keys : null;
+}
+
 function doneActions() {
   const p = state.plan;
+  const rev = revisable();
   return h('section', { class: 'dact', 'aria-labelledby': 'q-h' },
     h('h2', { class: 'disp dacth', id: 'q-h', tabindex: '-1' },
       p && state.planDirty ? 'Your details changed.' : p ? 'Your plan uses these details.' : "That's everything I need."),
-    h('p', { class: 'lead' }, p && state.planDirty
+    h('p', { class: 'lead' }, rev
+      ? `I'll revise the plan for the new ${rev.join(' and ')}: what you decided stays unless it no longer works, and every deadline moves with the date. You'll see the before and after first.`
+      : p && state.planDirty
       ? 'I can re-plan every stop around the new details, or you can keep the current plan.'
       : p ? 'Change anything here and I will offer to re-plan.'
         : "I'll walk you through one decision at a time, starting with the venue. Change any detail whenever you like."),
     h('div', { class: 'pact' },
-      !p || state.planDirty
-        ? primary({ disabled: state.busy, onClick: buildPlan }, p ? 'Re-plan with these details' : 'Start the journey') : null,
+      rev ? primary({ disabled: state.busy, onClick: () => reviseFromDetails(rev) }, 'Show what changes')
+        : !p || state.planDirty
+          ? primary({ disabled: state.busy, onClick: buildPlan }, p ? 'Re-plan with these details' : 'Start the journey') : null,
       p ? (state.planDirty ? h('button', { class: 'btn', type: 'button', onClick: () => { discardDetailEdits(); go('journey', { focus: 'stop' }); } },
         'Keep the current plan (undo these edits)') : primary({ onClick: () => go('journey', { focus: 'stop' }) }, 'Back to the journey')) : null),
     state.err ? h('p', { class: 'err', role: 'alert' }, state.err) : null);
@@ -505,7 +522,8 @@ function detailsView() {
       sum ? h('p', { class: 'dsum' }, h('span', { 'data-budget-line': '' }, budgetLine(sum.budget)),
         ` · ${sum.budget.decided} of ${sum.budget.count} stops decided`) : null,
       guide(!plan ? 'Check what I understood and edit anything that is wrong, then tap Start the journey.'
-        : state.planDirty ? 'Your details changed. Tap Re-plan with these details, or keep the current plan.'
+        : revisable() ? 'Your details changed. Tap Show what changes to revise the plan, or keep the current plan.'
+          : state.planDirty ? 'Your details changed. Tap Re-plan with these details, or keep the current plan.'
           : 'Your plan uses these details. Edit anything here, or tap Back to the journey.')),
     h('div', { class: 'dgrid' },
       h('div', { class: 'dside' },

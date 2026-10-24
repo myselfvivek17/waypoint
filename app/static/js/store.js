@@ -59,6 +59,14 @@ export function resetAll() {
 
 // ------------------------------------------------------------------ plan state mutations
 
+/** What every change request sends along: the plan, the choices on it, what is booked (never
+    swapped) and what is decided (kept unless a rule now breaks it). */
+export function planBody(extra) {
+  const booked = state.plan.stops.map((s) => s.key).filter((k) => state.ticks[k]);
+  const decided = Object.keys(state.j.decided).filter((k) => state.j.decided[k]);
+  return Object.assign({ plan: state.plan, chosen: state.j.chosen, ripples: state.j.ripples, booked, decided }, extra);
+}
+
 /** A fresh plan from the server: the journey starts over and the details follow the plan. */
 export function adoptPlan(plan) {
   Object.assign(state, { plan, profile: plan.profile, j: freshJourney(), ticks: {}, planDirty: false, diff: null });

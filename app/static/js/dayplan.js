@@ -4,7 +4,7 @@ import { dayIcon } from './art.js';
 import { h, inr, longDate } from './dom.js';
 import { budgetLine, priceSays, priceText, stopsModel, summary, taskRows } from './model.js';
 import { moreMenu } from './menu.js';
-import { applyAdjustment, pickItemAlt, setItemStatus, setPaid, state, toggleTick } from './store.js';
+import { applyAdjustment, pickItemAlt, planBody, setItemStatus, setPaid, state, toggleTick } from './store.js';
 import { announce, empty, go, guide, priceTag, primary, say, stopThinking, think, todayIso, update } from './ui.js';
 
 /** Suggested requests, chosen from what this plan actually has. */
@@ -95,6 +95,9 @@ export function dayView(opts = {}) {
 /** One line for the overlay that says what is being re-planned, in the user's own terms. */
 export function adjustLine(request) {
   const t = request.toLowerCase();
+  const parts = [/guest|people|pax|friends/.test(t) && 'guests', /budget|₹|\d\s*(k|lakh)\b|%/.test(t) && 'budget',
+    /earlier|later|postpone|prepone|date|\b\d{1,2}\s*(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/.test(t) && 'date'].filter(Boolean);
+  if (parts.length > 1) return `Revising the ${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}, and checking every deadline…`;
   const without = t.match(/(?:no|don'?t want(?: a| the| any)?|without(?: a| the)?|remove(?: the)?|skip(?: the)?|drop(?: the)?|cancel(?: the)?)\s+([a-z][a-z -]{1,30})/);
   if (without) return `Re-planning without ${without[1].replace(/\s+(please|thanks?)$/, '').trim()}…`;
   const add = t.match(/\badd(?: a| an)?\s+([a-z][a-z -]{1,30})/);
@@ -109,8 +112,7 @@ export function adjustLine(request) {
 async function runSuggestion(sug) {
   update({ busy: true, adjMsg: '', adjSuggest: null, diff: null });
   think(sug.text.replace(/\?$/, '…'));
-  const booked = state.plan.stops.map((s) => s.key).filter((k) => state.ticks[k]);
-  const r = await api.apply({ plan: state.plan, chosen: state.j.chosen, ripples: state.j.ripples, booked, ops: [sug.op] });
+  const r = await api.apply(planBody({ ops: [sug.op] }));
   stopThinking();
   if (!r.ok || !r.data.understood) { update({ busy: false, adjMsg: r.ok ? r.data.note : errorText(r) }); return; }
   update({ busy: false, diff: Object.assign({ request: sug.request }, r.data), adjSource: 'rules' }, { focus: 'diff-h' });
@@ -122,8 +124,7 @@ async function runAdjust(text) {
   if (!request) return;
   update({ busy: true, adjMsg: '', adjSuggest: null, diff: null });
   think(adjustLine(request));
-  const booked = state.plan.stops.map((s) => s.key).filter((k) => state.ticks[k]);
-  const r = await api.adjust({ plan: state.plan, chosen: state.j.chosen, ripples: state.j.ripples, booked, request });
+  const r = await api.adjust(planBody({ request }));
   stopThinking();
   if (!r.ok) { update({ busy: false, adjMsg: errorText(r) }); return; }
   if (!r.data.understood) {
@@ -136,6 +137,34 @@ async function runAdjust(text) {
   announce(`${r.data.title}. ${r.data.note}`);
 }
 
+/** "Let's make this work": a way out re-runs the whole revision with its own numbers, so the diff
+    still compares against the plan as it was. */
+async function runWay(w) {
+  const d = state.diff;
+  update({ busy: true });
+  think(`Trying: ${w.title.toLowerCase()}…`);
+  const r = await api.apply(planBody({ ops: w.ops }));
+  stopThinking();
+  if (!r.ok || !r.data.understood) { update({ busy: false, adjMsg: r.ok ? r.data.note : errorText(r) }, { focus: 'adj-msg' }); return; }
+  update({ busy: false, diff: Object.assign({ request: d.request }, r.data) }, { focus: 'diff-h' });
+  announce(`${w.title}. ${r.data.note}`);
+}
+
+/** Guests, budget or date edited on the Details page: the same revision as saying it, never a fresh plan. */
+export async function reviseFromDetails(fields) {
+  const p = state.profile;
+  const ops = fields.map((f) => (f === 'date' ? { op: 'move_date', date: p.date }
+    : { op: f === 'guests' ? 'set_guests' : 'set_budget', amount: p[f] }));
+  update({ busy: true, err: '' });
+  think('Revising the plan around your new details…');
+  const r = await api.apply(planBody({ ops }));
+  stopThinking();
+  if (!r.ok || !r.data.understood) { update({ busy: false, err: r.ok ? r.data.note : errorText(r) }); return; }
+  update({ busy: false, diff: Object.assign({ request: 'your new details' }, r.data), adjMsg: '', adjSuggest: null }, { render: false });
+  go('plan', { focus: 'diff-h' });
+  announce(`${r.data.title}. ${r.data.note}`);
+}
+
 function applyDiff() {
   const d = state.diff;
   const before = Object.fromEntries(stopsModel(state).map((x) => [x.key, x]));
@@ -143,7 +172,7 @@ function applyDiff() {
   const changes = stopsModel(next).filter((a) => !before[a.key] || a.item.id !== before[a.key].item.id || a.price !== before[a.key].price)
     .map((a) => ({ key: a.key, itemChanged: !before[a.key] || a.item.id !== before[a.key].item.id }));
   applyAdjustment(d, changes);
-  update({});
+  update({ planDirty: false });
   say('Plan updated. Changed stops are marked on the journey.');
 }
 
@@ -195,12 +224,25 @@ function paidControl(t, sv) {
     After a request it reflects who actually answered (a live model can still fail over to the rules). */
 function adjustTag() {
   const last = state.diff ? state.diff.source : state.adjSource;
-  const ai = last ? last === 'ai' : state.llmMode === 'live' && !state.demo.offline;
+  const live = state.llmMode === 'live' && !state.demo.offline;
+  const ai = last ? last === 'ai' : live;
   return h('span', { class: 'aitag' + (ai ? ' ai' : ''), 'data-source': ai ? 'ai' : 'rules' },
-    ai ? 'AI' : 'Rules parser · AI offline');
+    ai ? 'AI' : last === 'rules' && live ? 'Read by code, AI on standby' : 'Rules parser · AI offline');
+}
+
+/** The numbers no longer work: the rules' three ways out, the first one marked as the next step. */
+function waysView(d) {
+  return h('section', { class: 'chg ways-out', 'aria-labelledby': 'ways-h' },
+    h('p', { class: 'step' }, "Let's make this work"),
+    h('h4', { class: 'disp h2', id: 'ways-h', style: { fontSize: '22px', margin: '0' } }, d.block_title),
+    h('p', { class: 'lead', style: { margin: '6px 0 0' } }, d.block_body),
+    h('ol', { class: 'ways' }, d.ways.map((w, i) => h('li', null,
+      h('button', { class: 'way', type: 'button', 'data-next': i === 0 ? true : null, disabled: state.busy, onClick: () => runWay(w) },
+        h('span', { class: 'wt' }, w.title), h('span', { class: 'wd' }, w.detail))))));
 }
 
 function diffView(d) {
+  const blocked = !!(d.ways && d.ways.length);
   return h('div', { role: 'region', 'aria-labelledby': 'diff-h' },
     h('h3', { class: 'disp h2', id: 'diff-h', tabindex: '-1', style: { fontSize: '22px' } }, d.title),
     h('table', { class: 'diff' },
@@ -209,8 +251,12 @@ function diffView(d) {
       h('tbody', null, d.rows.map((r) => h('tr', null, h('td', null, r.label), h('td', null, r.before), h('td', null, h('b', null, r.after)))))),
     h('p', { class: 'chgmsg' }, d.note,
       d.source === 'rules' ? null : d.source !== 'ai' ? h('span', { class: 'tt2' }, ' (Understood by the rules parser, not the AI.)') : null),
+    d.explain && d.explain.length ? h('div', { class: 'explain' }, h('p', { class: 'flab' }, 'What I kept, changed and assumed'),
+      h('ul', null, d.explain.map((t) => h('li', null, t)))) : null,
+    blocked ? waysView(d) : null,
     h('div', { class: 'pact' },
-      primary({ onClick: applyDiff }, 'Apply changes'),
+      blocked ? h('button', { class: 'btn', type: 'button', onClick: applyDiff }, 'Apply anyway')
+        : primary({ onClick: applyDiff }, 'Apply changes'),
       h('button', { class: 'btn', type: 'button', onClick: () => update({ diff: null }, { focus: 'adj-in' }) }, 'Keep as it is')));
 }
 
@@ -227,7 +273,9 @@ export function planView() {
   // one next step: the diff waiting for a decision, else the next task, else the invitation
   const step = state.diff ? 'diff' : next ? 'task' : 'invite';
   const doneWord = next && next.price ? 'Mark as booked' : 'Mark as done';
-  const guideText = step === 'diff' ? 'Check the before and after, then tap Apply changes, or Keep as it is.'
+  const guideText = step === 'diff' && state.diff.ways && state.diff.ways.length
+    ? `These numbers don't work yet. Pick one of the ${state.diff.ways.length} ways below; the first is the one I would choose.`
+    : step === 'diff' ? 'Check the before and after, then tap Apply changes, or Keep as it is.'
     : step === 'task' ? `${late ? `${late} task${late > 1 ? 's are' : ' is'} late. ` : ''}Next up: ${next.text}${next.due ? ` (${next.dueText[0].toLowerCase() + next.dueText.slice(1)})` : ''}. Tap ${doneWord} once it is done.`
       : rows.length ? 'Everything is booked. Tap Design the invitation card next.'
         : 'Nothing to book yet. Add stops on the Journey, or tap Design the invitation card.';

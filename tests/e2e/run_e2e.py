@@ -972,6 +972,64 @@ def v4_prices(r: Run, dark: bool) -> None:
     assert_no_null_text(p)
 
 
+EXPLAINER = "actually we have 50 more guests, our budget decreased a bit, and the event is two weeks earlier"
+
+
+def diff_rows(p: Page) -> dict:
+    return p.evaluate("""() => Object.fromEntries([...document.querySelectorAll('.diff tbody tr')].map((tr) =>
+        [tr.cells[0].textContent, [tr.cells[1].textContent, tr.cells[2].textContent]]))""")
+
+
+def v4_revision(r: Run, dark: bool) -> None:
+    """Item 2: the explainer's sentence on the Aditya plan -> one diff -> a way out -> apply -> plan updated."""
+    p = r.page
+    suffix = "-dark" if dark else ""
+    r.step("revision: the explainer's sentence, one diff, ways out, apply" + (" (dark)" if dark else ""))
+    open_sample(p, dark)
+    p.click("#ok-btn")  # decide the venue: the revision must keep it
+    expect(p.locator("#prop-h")).to_be_visible()
+    p.click("nav >> text=My plan")
+    p.fill("#adj-in", EXPLAINER)
+    p.click("#view button >> text=Show me")
+    expect(p.locator("#diff-h")).to_contain_text("50 more guests (30 → 80)", timeout=40000)
+    rows = diff_rows(p)
+    assert rows["Guests"] == ["30", "80"] and rows["Budget"] == ["₹40,000", "₹36,000"], rows
+    assert rows["Date"][1] == "1 Nov" and rows["Per guest"] == ["₹1,333", "₹450"] and "Days to go" in rows, rows
+    assert any(k.startswith("Now urgent") for k in rows), rows
+    expect(p.locator(".explain")).to_contain_text("so I took 10%")
+    expect(p.locator(".explain")).to_contain_text("You decided on")
+    expect(p.locator(".ways-out .way")).to_have_count(3)
+    assert one_next_step(p, "a revision that no longer adds up").startswith("Keep ₹36,000, invite 60")
+    r.shot("v4-revision-diff" + suffix)
+    p.locator(".ways-out .way").first.click()
+    expect(p.locator(".ways-out")).to_have_count(0, timeout=40000)
+    assert diff_rows(p)["Guests"] == ["30", "60"]
+    assert one_next_step(p, "the revision after a way out") == "Apply changes"
+    r.shot("v4-revision-way" + suffix, full=False)
+    p.click("#view button >> text=Apply changes")
+    expect(p.locator("#diff-h")).to_have_count(0)
+    prof = p.evaluate("import('/js/store.js').then((m) => [m.state.plan.profile, m.state.profile])")
+    assert prof[0] == prof[1] and (prof[0]["guests"], prof[0]["budget"], prof[0]["date"]) == (60, 36000, "2026-11-01"), prof
+    expect(p.locator("#bud-h + p [data-budget-line]")).to_contain_text("of ₹36,000")
+    check_totals_match(r, "after the explainer's revision")
+    p.click("nav >> text=Details")
+    expect(p.locator(".dmeta")).to_contain_text("1 November 2026")
+
+    r.step("details page: editing the budget revises the plan, it doesn't start again")
+    p.click("#ed-budget")
+    p.fill("#ed-in", "45000")
+    p.click(".drow.editing button[type=submit]")
+    expect(p.locator("#view button >> text=Show what changes")).to_be_visible(timeout=40000)
+    one_next_step(p, "details after an edit")
+    p.click("#view button >> text=Show what changes")
+    expect(p.locator("#diff-h")).to_contain_text("Set the budget to ₹45,000", timeout=40000)
+    assert diff_rows(p)["Per guest"] == ["₹600", "₹750"]
+    p.click("#view button >> text=Apply changes")
+    assert p.evaluate("import('/js/store.js').then((m) => [m.state.plan.profile.budget, m.state.planDirty])") == [45000, False]
+    expect(p.locator(".offb.dirty")).to_have_count(0)
+    assert_no_null_text(p)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--live", action="store_true", help="use the real model from .env")
@@ -1004,6 +1062,7 @@ def main() -> int:
                             edges(r)
                     if only in ("", "v4"):
                         v4_prices(r, dark)
+                        v4_revision(r, dark)
                     if only in ("", "picker"):
                         area_picker(r, dark)
                     if only in ("", "guided"):

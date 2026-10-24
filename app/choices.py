@@ -22,11 +22,11 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
-from . import llm, planner, prices, rules, templates
+from . import llm, planner, prices, revise, rules, templates
 from .intake import parse_date, parse_money
 from .places import PlaceSet
 from .rules import inr
-from .schemas import DayItem, Mode, Option, Plan, Profile, Source, Stop, Strict
+from .schemas import DayItem, Mode, Option, Plan, Profile, Source, Stop, Strict, Task
 from .validators import CAPS, clip, line_total, to_int
 
 log = logging.getLogger("waypoint.choices")
@@ -36,7 +36,7 @@ ITEM_OPS = {"remove_item", "skip_item", "have_item", "own_item", "move_item"}
 PLAN_OPS = {"add_stop", "add_item", "cut_budget", "set_budget", "add_guests", "remove_guests", "set_guests",
             "outdoors", "indoors", "move_date"}
 OPS = STOP_OPS | ITEM_OPS | PLAN_OPS
-MAX_OPS = 6
+MAX_OPS = 8
 MAX_STOPS = 10
 
 INSTRUCTIONS = """
@@ -105,6 +105,7 @@ class AdjustIn(Strict):
     chosen: dict[str, str] = Field(default_factory=dict, max_length=12)
     ripples: list[RippleState] = Field(default_factory=list, max_length=30)
     booked: list[str] = Field(default_factory=list, max_length=20)  # stops already paid for: never swapped
+    decided: list[str] = Field(default_factory=list, max_length=20)  # kept unless a rule now breaks them
     request: str = Field(min_length=1, max_length=300)
 
 
@@ -115,6 +116,7 @@ class ApplyIn(Strict):
     chosen: dict[str, str] = Field(default_factory=dict, max_length=12)
     ripples: list[RippleState] = Field(default_factory=list, max_length=30)
     booked: list[str] = Field(default_factory=list, max_length=20)
+    decided: list[str] = Field(default_factory=list, max_length=20)
     ops: list[Op] = Field(min_length=1, max_length=MAX_OPS)
 
 
@@ -122,6 +124,15 @@ class DiffRow(BaseModel):
     label: str
     before: str
     after: str
+
+
+class WayOut(BaseModel):
+    """One way out of numbers that no longer work ("Keep ₹35,000, invite 58"), as operations that are
+    re-run together with the revision."""
+
+    title: str
+    detail: str
+    ops: list[Op]
 
 
 class AdjustOut(BaseModel):
@@ -138,6 +149,11 @@ class AdjustOut(BaseModel):
     suggest: Op | None = None       # when not understood: the closest thing I can do
     suggest_text: str = ""
     freed: int = 0                  # rupees freed by skipped or removed stops
+    explain: list[str] = []         # what was kept, what a rule forced, what was assumed
+    over: int = 0                   # rupees over budget after the change
+    block_title: str = ""           # the new numbers are impossible: "let's make this work"
+    block_body: str = ""
+    ways: list[WayOut] = []
 
 
 # ------------------------------------------------------------------ pricing (mirrors the browser's model.js)
@@ -401,8 +417,13 @@ class Ctx:
     chosen: dict[str, str]
     ripples: list[RippleState]
     booked: set[str]
+    decided: set[str] = field(default_factory=set)
     titles: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    explain: list[str] = field(default_factory=list)
+    budget_set: bool = False  # the user changed the budget: squeeze undecided stops to fit it
+    orig: dict[str, str] = field(default_factory=dict)  # the choices before this change
+    touched: set[str] = field(default_factory=set)      # stops already explained
     _ps: PlaceSet | None = None
 
     def stop(self, key: str | None) -> Stop | None:
@@ -410,6 +431,17 @@ class Ctx:
 
     def profile(self) -> Profile:
         return self.plan.profile.model_copy(update={"guests": self.guests, "budget": self.budget, "date": self.date})
+
+    def locked(self, s: Stop) -> bool:
+        """Never swapped by a re-plan: booked, priced by the user or a quote, or not the plan's pick."""
+        return s.key in self.booked or s.status != "open" or prices.source(s) != "estimate"
+
+    def kept(self, s: Stop) -> bool:
+        """Kept as it is unless a rule now breaks it: locked, or decided by the user."""
+        return self.locked(s) or s.key in self.decided
+
+    def current(self, s: Stop) -> Option:
+        return next((o for o in _all(s) if o.id == self.chosen.get(s.key)), s.rec)
 
     async def places(self) -> PlaceSet:
         if self._ps is None:
@@ -426,19 +458,13 @@ def _later(plan: Plan, key: str) -> set[str]:
     return set(keys[keys.index(key) + 1:]) if key in keys else set()
 
 
-async def set_mode(c: Ctx, s: Stop, mode: str, cascade: bool = True) -> None:
-    """Re-plan one stop for a way of doing it, then let dependent stops follow (explained)."""
+async def rebuild(c: Ctx, s: Stop, mode: str) -> Stop | None:
+    """Re-plan one stop from the rules for the current profile and a way of doing it."""
     row = rules.mode_row(s.key, mode)
     if row is None:
-        return
-    p, now = c.profile(), c.now
-    r = rules.evaluate(p, now)
-    c.titles.append(f"{s.label}: {row[1].lower()}")
-    if row[0] == "have":  # "already have a poojari": covered, nothing to suggest
-        s.mode, s.status, s.note = mode, "have", s.note or "Your own poojari"
-        s.lead, s.verb = row[3], row[4]
-        c.drop_choice(s.key)
-        return
+        return None
+    p = c.profile()
+    r = rules.evaluate(p, c.now)
     if s.key == "food":
         draft = templates.food_mode_stop(p, r, mode)
     elif s.key == "venue":
@@ -454,6 +480,21 @@ async def set_mode(c: Ctx, s: Stop, mode: str, cascade: bool = True) -> None:
     new.rule = s.rule if s.custom else ""
     c.plan.stops = [new if x.key == s.key else x for x in c.plan.stops]
     c.drop_choice(s.key)
+    return new
+
+
+async def set_mode(c: Ctx, s: Stop, mode: str, cascade: bool = True) -> None:
+    """Re-plan one stop for a way of doing it, then let dependent stops follow (explained)."""
+    row = rules.mode_row(s.key, mode)
+    if row is None:
+        return
+    c.titles.append(f"{s.label}: {row[1].lower()}")
+    if row[0] == "have":  # "already have a poojari": covered, nothing to suggest
+        s.mode, s.status, s.note = mode, "have", s.note or "Your own poojari"
+        s.lead, s.verb = row[3], row[4]
+        c.drop_choice(s.key)
+        return
+    await rebuild(c, s, mode)
     if not cascade:
         return
     for other, keep, to, why in rules.MODE_EFFECTS.get((s.key, mode), []):
@@ -461,7 +502,6 @@ async def set_mode(c: Ctx, s: Stop, mode: str, cascade: bool = True) -> None:
         if o is not None and o.mode not in keep and o.status == "open" and o.key not in c.booked:
             await set_mode(c, o, to, cascade=False)
             c.notes.append(why)
-
 
 async def add_stop(c: Ctx, name: str) -> None:
     keys = [s.key for s in c.plan.stops]
@@ -590,65 +630,68 @@ async def apply_op(c: Ctx, op: Op) -> None:
             await _plan_op(c, op)
 
 
+def squeeze(c: Ctx, limit: int) -> None:
+    """Swap undecided stops to cheaper options, biggest saving first, until the total fits ``limit``.
+    Decided, booked and user-priced stops are never touched: the trade-off step asks about those."""
+    for _ in range(12):
+        cur = priced(c.plan, c.guests, c.chosen, c.ripples)
+        if sum(x[2] for x in cur) <= limit:
+            return
+        best = None
+        for s, item, _price in cur:
+            if c.kept(s):
+                continue
+            for o in _all(s):
+                if o.id == item.id or (o.cap and o.cap < c.guests):
+                    continue
+                trial_c = {**c.chosen, s.key: o.id}
+                trial_r = [x for x in c.ripples if x.src != s.key] + [
+                    RippleState(src=s.key, stop=x.stop, note=x.note, extra=x.extra) for x in o.ripple]
+                save = sum(x[2] for x in cur) - sum(x[2] for x in priced(c.plan, c.guests, trial_c, trial_r))
+                if save > 0 and (best is None or save > best[0]):
+                    best = (save, s, o)
+        if best is None:
+            return
+        c.ripples = _take(best[1], best[2], c.chosen, c.ripples)
+
+
+def cheapest_fit(c: Ctx, s: Stop | None, pred) -> Option | None:
+    """The cheapest option of ``s`` that passes ``pred`` and holds everyone (an unknown size counts)."""
+    if s is None:
+        return None
+    fits = [o for o in _all(s) if pred(o) and (o.cap is None or o.cap >= c.guests)]
+    return min(fits, key=lambda o: o.price) if fits else None
+
+
 async def _plan_op(c: Ctx, op: Op) -> None:
-    """Budget, guests, indoors/outdoors and date: re-planned deterministically."""
+    """Budget, guests, indoors/outdoors and date. Guests, budget and date only change the numbers here;
+    ``settle`` then re-plans the stops they affect, once, after every operation has run."""
     amount = to_int(op.amount, 0, 500_000_000) if op.amount is not None else None
     try:
         amount_f = float(op.amount) if op.amount is not None else None
     except (TypeError, ValueError):
         amount_f = None
     venue = c.stop("venue")
-
-    def cheapest_fit(pred) -> Option | None:
-        if venue is None or venue.key in c.booked or venue.status != "open":
-            return None
-        fits = [o for o in _all(venue) if pred(o) and (o.cap is None or o.cap >= c.guests)]
-        return min(fits, key=lambda o: o.price) if fits else None
-
-    def squeeze(limit: int) -> None:
-        for _ in range(12):
-            cur = priced(c.plan, c.guests, c.chosen, c.ripples)
-            if sum(x[2] for x in cur) <= limit:
-                return
-            best = None
-            for s, item, _price in cur:
-                if s.key in c.booked or s.status != "open":
-                    continue
-                for o in _all(s):
-                    if o.id == item.id or (o.cap and o.cap < c.guests):
-                        continue
-                    trial_c = {**c.chosen, s.key: o.id}
-                    trial_r = [x for x in c.ripples if x.src != s.key] + [
-                        RippleState(src=s.key, stop=x.stop, note=x.note, extra=x.extra) for x in o.ripple]
-                    save = sum(x[2] for x in cur) - sum(x[2] for x in priced(c.plan, c.guests, trial_c, trial_r))
-                    if save > 0 and (best is None or save > best[0]):
-                        best = (save, s, o)
-            if best is None:
-                return
-            c.ripples = _take(best[1], best[2], c.chosen, c.ripples)
-
+    said = clip(op.text, 80) if op.text else ""
     if op.op in ("cut_budget", "set_budget"):
         if op.op == "cut_budget":
             pct = min(max(amount_f or 20, 1), 90)
             c.budget = int(round(c.budget * (1 - pct / 100) / 100) * 100)
-            c.titles.append(f"Cut the budget by {pct:g}%")
+            c.titles.append(said or f"Cut the budget by {pct:g}%")
         else:
             c.budget = int(min(max(amount or c.budget, 1000), 500_000_000))
-            c.titles.append(f"Set the budget to {inr(c.budget)}")
-        squeeze(c.budget)
+            c.titles.append(said or f"Set the budget to {inr(c.budget)}")
+        c.budget_set = True
     elif op.op in ("add_guests", "remove_guests", "set_guests"):
         k = int(amount or 10)
         c.guests = min(5000, {"add_guests": c.guests + k, "remove_guests": max(1, c.guests - k),
                               "set_guests": max(1, k)}[op.op])
-        c.titles.append(f"{'Add' if op.op == 'add_guests' else 'Remove' if op.op == 'remove_guests' else 'Plan for'} "
-                        f"{k if op.op != 'set_guests' else c.guests} guests")
-        cur = next((it for st, it, _ in priced(c.plan, c.guests, c.chosen, c.ripples) if st.key == "venue"), None)
-        if cur is not None and cur.cap and cur.cap < c.guests and (fit := cheapest_fit(lambda o: True)):
-            c.ripples = _take(venue, fit, c.chosen, c.ripples)
+        c.titles.append(said or f"{'Add' if op.op == 'add_guests' else 'Remove' if op.op == 'remove_guests' else 'Plan for'} "
+                                f"{k if op.op != 'set_guests' else c.guests} guests")
     elif op.op in ("outdoors", "indoors"):
         want = op.op == "outdoors"
         c.titles.append("Move it outdoors" if want else "Move it indoors")
-        cur = next((it for st, it, _ in priced(c.plan, c.guests, c.chosen, c.ripples) if st.key == "venue"), None)
+        cur = c.current(venue) if venue is not None else None
         if cur is not None and cur.outdoor == want:
             c.notes.append(f"The venue is already {'open-air' if want else 'covered'}.")
             if want:
@@ -656,7 +699,7 @@ async def _plan_op(c: Ctx, op: Op) -> None:
                     src="outdoors", stop="day", note="Rain cover on standby for the open-air venue.",
                     extra=int(round(c.budget * .03, -2)))]
                 c.notes.append("I added a rain cover on standby.")
-        elif (fit := cheapest_fit(lambda o: o.outdoor == want)) is not None:
+        elif venue is not None and not c.locked(venue) and (fit := cheapest_fit(c, venue, lambda o: o.outdoor == want)):
             c.ripples = _take(venue, fit, c.chosen, c.ripples)
         else:
             c.notes.append(f"I have no {'open-air' if want else 'covered'} venue among the options.")
@@ -669,8 +712,78 @@ async def _plan_op(c: Ctx, op: Op) -> None:
             c.notes.append("I couldn't find a future date in that. Try \"move it to 6 Dec\".")
         else:
             c.date = new
-            c.titles.append(f"Move it to {new.day} {new:%b %Y}")
+            c.titles.append(said or f"Move it to {new.day} {new:%b %Y}")
 
+
+async def settle(c: Ctx, old: Profile) -> None:
+    """After a change of guests, budget or date: re-plan only the stops it affects. Decided stops stay
+    unless a rule now breaks them, and every such change is explained."""
+    p = c.profile()
+    if p.guests != old.guests:
+        await _resize(c, old, p)
+    if p.date != old.date and p.date and p.date.month in (6, 7, 8, 9):
+        venue = c.stop("venue")
+        if venue is not None and not c.locked(venue) and c.current(venue).outdoor:
+            fit = cheapest_fit(c, venue, lambda o: not o.outdoor)
+            if fit is not None:
+                was = c.current(venue).name
+                c.ripples = _take(venue, fit, c.chosen, c.ripples)
+                c.explain.append(f"The new date is in the monsoon, so the open-air {was} became {fit.name}, which is covered.")
+            else:
+                c.explain.append("The new date is in the monsoon: plan a rain cover for the open-air venue.")
+    if c.budget_set:
+        was = dict(c.chosen)
+        squeeze(c, c.budget)
+        swapped = [s.label.lower() for s in c.plan.stops if c.chosen.get(s.key) != was.get(s.key)]
+        if swapped:
+            c.touched |= {s.key for s in c.plan.stops if c.chosen.get(s.key) != was.get(s.key)}
+            c.explain.append(f"To fit {inr(c.budget)}, I picked cheaper options where you hadn't decided yet: "
+                             f"{', '.join(swapped)}.")
+    for s in c.plan.stops:  # say what stayed as decided, so nothing changes behind the user's back
+        if (s.key in c.decided and s.status == "open" and not c.locked(s) and s.key not in c.touched
+                and c.chosen.get(s.key) == c.orig.get(s.key)):
+            c.explain.append(f"Kept your decided {s.label.lower()}: {c.current(s).name}.")
+
+
+async def _resize(c: Ctx, old: Profile, p: Profile) -> None:
+    """A new head count: the venue must still hold everyone (a rule that can override a decision),
+    an undecided venue follows the size the rules now call for, and an undecided cake is resized."""
+    c.touched |= {"venue", "cake", "food"}
+    venue = c.stop("venue")
+    if venue is not None and not c.locked(venue):
+        cur = c.current(venue)
+        size_was, size_now = rules.size(old)[0], rules.size(p)[0]
+        if cur.cap and cur.cap < c.guests:
+            fit = cheapest_fit(c, venue, lambda o: o.id != cur.id)
+            if fit is not None:
+                c.ripples = _take(venue, fit, c.chosen, c.ripples)
+                c.explain.append(f"{cur.name} holds about {cur.cap}, fewer than {c.guests} guests, so the venue is now "
+                                 f"{fit.name}" + (" (this overrides your decision: the rule is that everyone must fit)."
+                                                  if venue.key in c.decided else "."))
+            elif venue.mode and (new := await rebuild(c, venue, venue.mode)) is not None:
+                c.explain.append(f"{cur.name} holds about {cur.cap}, fewer than {c.guests} guests, and no option was big "
+                                 f"enough, so I looked again: {new.rec.name}.")
+        elif size_was != size_now and venue.key not in c.decided and venue.mode:
+            new = await rebuild(c, venue, venue.mode)
+            if new is not None:
+                c.explain.append(f"{c.guests} guests need {size_now} rather than {size_was}, so I re-planned the "
+                                 f"venue: {new.rec.name}.")
+        elif size_was != size_now:
+            c.explain.append(f"{c.guests} guests usually need {size_now}. You decided on {cur.name}: check it holds "
+                             f"everyone comfortably.")
+    cake = c.stop("cake")
+    if cake is not None and old.guests and not c.kept(cake):
+        ratio = c.guests / old.guests
+        for o in _all(cake):
+            o.price = max(100, int(round(o.price * ratio / 100) * 100))
+        c.explain.append(f"The cake is resized for {c.guests} guests (about 1 kg for every 12).")
+    elif cake is not None and cake.key in c.decided and cake.status == "open":
+        c.explain.append(f"Your cake was sized for {old.guests}; ask the baker for one that serves {c.guests}.")
+    food = c.stop("food")
+    if food is not None and food.key in c.decided and not c.locked(food) and c.current(food).per_guest:
+        item = c.current(food)
+        c.explain.append(f"Kept your food choice; at {inr(item.price)} a guest it is now about "
+                         f"{inr(item.price * c.guests)} for {c.guests}.")
 
 def stop_rule(s: Stop, r: rules.RulesResult, p: Profile) -> str:
     """The rule behind a stop, including the way the user chose to do it."""
@@ -709,7 +822,58 @@ def _describe(s: Stop, item: Option, price: int) -> str:
     return f"{name} · {prices.tag(price, src)}"
 
 
-def diff(before_plan: Plan, after_plan: Plan, before: list, after: list, p: Profile, new_p: Profile) -> tuple[list[DiffRow], int]:
+URGENT_DAYS = 3  # a task due within this many days (or already late) is urgent
+MAX_URGENT_ROWS = 4
+
+
+def _urgent(t: Task, now: dt.date) -> bool:
+    return t.late or (t.due is not None and (t.due - now).days <= URGENT_DAYS)
+
+
+def _due_text(t: Task, now: dt.date) -> str:
+    if t.late:
+        return "late: do it today"
+    if t.due is None:
+        return "no date yet"
+    n = (t.due - now).days
+    return f"by {t.due.day} {t.due:%b}" + (" (today)" if n == 0 else f" (in {n} day{'s' if n != 1 else ''})")
+
+
+def timing_rows(before_plan: Plan, after_plan: Plan, p: Profile, new_p: Profile, booked: set[str] = frozenset()) -> list[DiffRow]:
+    """Per-guest figure, days to go, book-by dates that moved, and tasks that are newly urgent."""
+    rows: list[DiffRow] = []
+    now = after_plan.today
+    if (p.guests, p.budget) != (new_p.guests, new_p.budget) and p.guests and new_p.guests:
+        rows.append(DiffRow(label="Per guest", before=inr((p.budget or 0) // p.guests),
+                            after=inr((new_p.budget or 0) // new_p.guests)))
+    if p.date != new_p.date and p.date and new_p.date:
+        rows.append(DiffRow(label="Days to go", before=str((p.date - now).days), after=str((new_p.date - now).days)))
+        old = {t.id: t for t in before_plan.tasks}
+        moved = [t for t in after_plan.tasks if t.id in old and t.due != old[t.id].due]
+        if moved:
+            first_b = min((old[t.id].due for t in moved if old[t.id].due), default=None)
+            first_a = min((t.due for t in moved if t.due), default=None)
+            if first_b and first_a:
+                rows.append(DiffRow(label="Book-by dates", before=f"first by {first_b.day} {first_b:%b}",
+                                    after=f"first by {first_a.day} {first_a:%b} · {len(moved)} moved"))
+    old = {t.id: t for t in before_plan.tasks}
+    urgent = []
+    for t in after_plan.tasks:
+        if (t.stop or t.id) in booked or not _urgent(t, now):
+            continue
+        was = old.get(t.id)
+        if was is None or not _urgent(was, now):
+            urgent.append(DiffRow(label=f"Now urgent: {clip(t.text, 60)}", before=_due_text(was, now) if was else "—",
+                                  after=_due_text(t, now)))
+    if len(urgent) > MAX_URGENT_ROWS + 1:
+        more = len(urgent) - MAX_URGENT_ROWS
+        urgent = urgent[:MAX_URGENT_ROWS] + [DiffRow(label="Now urgent", before="—",
+                                                     after=f"{more} more tasks: see My plan")]
+    return rows + urgent
+
+
+def diff(before_plan: Plan, after_plan: Plan, before: list, after: list, p: Profile, new_p: Profile,
+         booked: set[str] = frozenset()) -> tuple[list[DiffRow], int]:
     rows: list[DiffRow] = []
     if new_p.guests != p.guests:
         rows.append(DiffRow(label="Guests", before=str(p.guests), after=str(new_p.guests)))
@@ -732,6 +896,7 @@ def diff(before_plan: Plan, after_plan: Plan, before: list, after: list, p: Prof
             rows.append(DiffRow(label=a[0].label, before=_describe(*b), after=_describe(*a)))
             if a[0].status == "skip" and b[0].status != "skip":
                 freed += b[2]
+    rows += timing_rows(before_plan, after_plan, p, new_p, booked)
     b_items = {it.id: it for _, it in _items(before_plan)}
     a_items = {it.id: it for _, it in _items(after_plan)}
     for iid, it in b_items.items():
@@ -749,22 +914,55 @@ def diff(before_plan: Plan, after_plan: Plan, before: list, after: list, p: Prof
     return rows, freed
 
 
+PLAN_FIELDS = {"cut_budget", "set_budget", "add_guests", "remove_guests", "set_guests", "move_date"}
+
+
+def ways_out(new_p: Profile, ops: list[Op]) -> tuple[str, str, list[WayOut]]:
+    """The rules' "let's make this work" ways for numbers below the floor, as operations to re-run
+    with the revision (a later set_guests or set_budget replaces the earlier one)."""
+    block = rules.budget_block(new_p)
+    if block is None:
+        return "", "", []
+    ways = []
+    for w in block.ways:
+        extra: list[Op] = []
+        a = w.apply or {}
+        if "guests" in a:
+            extra.append(Op(op="set_guests", amount=a["guests"], text=w.title))
+        if "budget" in a:
+            extra.append(Op(op="set_budget", amount=a["budget"], text=w.title if "guests" not in a else None))
+        if "food" in a:
+            extra.append(Op(op="own", stop="food", text=a["food"]))
+        ways.append(WayOut(title=w.title, detail=w.detail, ops=[o for o in ops if o.op not in PLAN_FIELDS or
+                                                               not any(e.op == o.op for e in extra)] + extra))
+    return block.title, block.body, ways
+
+
 async def run_ops(plan: Plan, chosen: dict[str, str], ripples: list[RippleState], booked: list[str], ops: list[Op],
-                  now: dt.date, request: str, source: Source) -> AdjustOut:
-    """Apply validated operations and describe the result as a diff."""
+                  now: dt.date, request: str, source: Source, decided: list[str] = (),
+                  assumed: list[str] = (), unread: list[str] = ()) -> AdjustOut:
+    """Apply validated operations and describe the result as ONE diff.
+
+    Guests, budget and date are applied first, then the stop and event-day operations (with the new
+    numbers), then ``settle`` re-plans the stops the new numbers affect, once, so "50 more guests, ₹35k,
+    two weeks earlier and no cake" is one revision with one diff."""
     p = plan.profile
     keys = [s.key for s in plan.stops]
     chosen = {k: v for k, v in chosen.items() if k in keys}
     ripples = [x for x in ripples if x.stop in keys]
     before = priced(plan, p.guests or 1, chosen, ripples)
     c = Ctx(plan=plan.model_copy(deep=True), now=now, guests=p.guests or 1, budget=p.budget or 0, date=p.date,
-            chosen=dict(chosen), ripples=list(ripples), booked=set(booked))
+            chosen=dict(chosen), ripples=list(ripples), booked=set(booked), decided=set(decided) & set(keys),
+            orig=dict(chosen))
+    ops = sorted(ops, key=lambda o: o.op not in PLAN_FIELDS)  # stable: the numbers first
     for op in ops:
         await apply_op(c, op)
+    if (c.guests, c.budget, c.date) != (p.guests or 1, p.budget or 0, p.date):
+        await settle(c, p)
     new_p = p.model_copy(update={"guests": c.guests, "budget": c.budget, "date": c.date})
     new_plan = replan(c.plan, new_p, now)
     after = priced(new_plan, c.guests, c.chosen, c.ripples)
-    rows, freed = diff(plan, new_plan, before, after, p, new_p)
+    rows, freed = diff(replan(plan, p, now), new_plan, before, after, p, new_p, set(booked))
     tb, ta = sum(x[2] for x in before), sum(x[2] for x in after)
     estimated = any(prices.source(x[0]) == "estimate" for x in after)
     rows.append(DiffRow(label="Total (includes estimates)" if estimated else "Total", before=inr(tb), after=inr(ta)))
@@ -775,21 +973,25 @@ async def run_ops(plan: Plan, chosen: dict[str, str], ripples: list[RippleState]
     if freed:
         note += f" {inr(freed)} freed and kept as savings."
     gap = ta - c.budget
-    note += (f" Still {inr(gap)} over budget. Try cutting a stop or the guest list." if gap > 0
-             else f" Fits the budget with {inr(-gap)} to spare.")
+    block_title, block_body, ways = ways_out(new_p, ops) if new_band == "impossible" else ("", "", [])
+    if not block_title:  # when blocked, the ways out say it
+        note += (f" Still {inr(gap)} over budget: choose where the money should go." if gap > 0
+                 else f" Fits the budget with {inr(-gap)} to spare.")
+    explain = list(assumed) + c.explain + [f"I didn't act on “{clip(u, 80)}”: {CAN_DO}" for u in unread]
     title = "; ".join(dict.fromkeys(c.titles)) or "Nothing to change"
-    return AdjustOut(understood=bool(c.titles), title=clip(title, 120), rows=rows if c.titles else [],
+    return AdjustOut(understood=bool(c.titles), title=clip(title[0].upper() + title[1:], 160), rows=rows if c.titles else [],
                      note=note.strip(), profile=new_p, chosen=c.chosen, ripples=c.ripples, plan=new_plan,
-                     source=source, ops=ops, freed=freed)
+                     source=source, ops=ops, freed=freed, explain=explain, over=max(0, gap) if not block_title else 0,
+                     block_title=block_title, block_body=block_body, ways=ways)
 
 
 # ------------------------------------------------------------------ the two entry points
 
-def _model_data(inp: AdjustIn) -> dict:
+def _model_data(inp: AdjustIn, request: str | None = None) -> dict:
     plan, p = inp.plan, inp.plan.profile
     cur = priced(plan, p.guests or 1, inp.chosen, inp.ripples)
     return {
-        "request": inp.request,
+        "request": request or inp.request,
         "event": {"type": p.type, "guests": p.guests, "budget": p.budget, "date": p.date.isoformat() if p.date else None},
         "stops": [{"key": s.key, "label": s.label, "current": it.name, "status": s.status, "mode": s.mode,
                    "modes": [m.id for m in s.modes]} for s, it, _ in cur],
@@ -798,13 +1000,39 @@ def _model_data(inp: AdjustIn) -> dict:
     }
 
 
-async def adjust(inp: AdjustIn, now: dt.date) -> AdjustOut:
-    """A request in words -> operations (model, else the rules parser) -> a re-planned diff.
+async def _revision(inp: AdjustIn, rev: revise.Revision, now: dt.date) -> AdjustOut:
+    """Guests, budget and date read by code; any other clause goes to the rules parser, then the model."""
+    plan = inp.plan
+    ops = [Op.model_validate(o) for o in rev.ops()]
+    source: Source = "rules"
+    unread: list[str] = []
+    for clause in rev.rest:
+        got = parse_ops(clause, plan, now)
+        ops += got
+        if not got:
+            unread.append(clause)
+    if unread:
+        res = await llm.ask("adjust", INSTRUCTIONS, _model_data(inp, "; ".join(unread)), OpsDraft,
+                            fallback=lambda: OpsDraft(), max_tokens=400, timeout=15)
+        extra = [o for o in validate_ops(res.value.ops, plan) if o.op not in PLAN_FIELDS]  # code already read those
+        if extra:
+            ops, source, unread = ops + extra, res.source, []
+    return await run_ops(plan, inp.chosen, inp.ripples, inp.booked, ops[:MAX_OPS], now, inp.request, source,
+                         inp.decided, rev.assumed + rev.problems, unread)
 
-    Never silently does nothing: a request neither can read gets an honest list of what I can
-    do, plus the closest operation as a one-tap suggestion.
+
+async def adjust(inp: AdjustIn, now: dt.date) -> AdjustOut:
+    """A request in words -> operations -> a re-planned diff.
+
+    Guests, budget and date are read deterministically first ("50 more guests, ₹35k, two weeks earlier");
+    anything else goes to the model, else the rules parser. Never silently does nothing: a request
+    neither can read gets an honest list of what I can do, plus the closest operation as a one-tap
+    suggestion.
     """
     plan = inp.plan
+    rev = revise.read(inp.request, plan.profile, now)
+    if rev.found:
+        return await _revision(inp, rev, now)
     res = await llm.ask("adjust", INSTRUCTIONS, _model_data(inp), OpsDraft,
                         fallback=lambda: OpsDraft(), max_tokens=400, timeout=15)
     ops, source = validate_ops(res.value.ops, plan), res.source
@@ -815,17 +1043,19 @@ async def adjust(inp: AdjustIn, now: dt.date) -> AdjustOut:
     if not ops:
         reply = clip(res.value.reply, CAPS["reply"]) if res.source == "ai" else ""
         sug, sug_text = closest(inp.request, plan)
-        return AdjustOut(understood=False, title="", rows=[], note=(reply + " " if reply else "") + CAN_DO,
+        note = " ".join(rev.problems + ([reply] if reply else []) + [CAN_DO])
+        return AdjustOut(understood=False, title="", rows=[], note=note,
                          profile=plan.profile, chosen=inp.chosen, ripples=inp.ripples, plan=plan, source=source,
                          suggest=sug, suggest_text=sug_text)
-    return await run_ops(plan, inp.chosen, inp.ripples, inp.booked, ops, now, inp.request, source)
+    return await run_ops(plan, inp.chosen, inp.ripples, inp.booked, ops, now, inp.request, source, inp.decided)
 
 
 async def apply(inp: ApplyIn, now: dt.date) -> AdjustOut:
-    """Operations straight from the UI. Validated exactly like the model's."""
+    """Operations straight from the UI (a stop's mode, the Details page, a way out, a trade-off).
+    Validated exactly like the model's."""
     ops = validate_ops(inp.ops, inp.plan)
     if not ops:
         return AdjustOut(understood=False, title="", rows=[], note="That change doesn't fit this plan.",
                          profile=inp.plan.profile, chosen=inp.chosen, ripples=inp.ripples, plan=inp.plan,
                          source="rules")
-    return await run_ops(inp.plan, inp.chosen, inp.ripples, inp.booked, ops, now, "", "rules")
+    return await run_ops(inp.plan, inp.chosen, inp.ripples, inp.booked, ops, now, "", "rules", inp.decided)
