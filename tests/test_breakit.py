@@ -356,3 +356,12 @@ def test_a_quote_for_the_old_head_count_is_called_stale(plan):
     assert any("Annapurna Caterers's quote" in e and "was for 30 guests" in e and "re-quote for 50" in e for e in out["explain"])
     booked = adjust(plan, "20 more guests", decided=["food"], booked=["food"])
     assert not any("re-quote" in e for e in booked["explain"])  # booked: the user already settled it
+
+
+def test_an_unusable_required_answer_is_asked_again_even_with_other_gaps():
+    """B02 (browser): with the budget still missing, "100000" guests moved on to the budget question."""
+    r = client.post("/api/chat", json={"message": "100000", "asked": "guests",
+                                       "profile": {"type": "birthday", "area": "Gachibowli, Hyderabad"},
+                                       "transcript": [{"field": None, "q": "What are you celebrating?", "a": "A birthday"}]})
+    out = r.json()
+    assert out["ask"] == "guests" and "up to 5,000 guests" in out["reply"]

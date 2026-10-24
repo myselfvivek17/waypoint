@@ -197,10 +197,140 @@ def quote_then_revise_then_remove(r: E.Run) -> None:
     clean_text(p, "plan after removing the quoted stop")
 
 
+def tab_to(p: Page, test: str, where: str, limit: int = 120) -> None:
+    """Press Tab until the focused element passes ``test`` (a JS predicate on document.activeElement)."""
+    for _ in range(limit):
+        p.keyboard.press("Tab")
+        if p.evaluate(f"(() => {{ const e = document.activeElement; return !!e && ({test}); }})()"):
+            visible = p.evaluate("(() => { const e = document.activeElement, r = e.getBoundingClientRect(),"
+                                 " s = getComputedStyle(e); return r.width > 0 && r.height > 0 &&"
+                                 " (s.outlineStyle !== 'none' || s.boxShadow !== 'none'); })()")
+            assert visible, f"{where}: the focused control has no visible focus ring"
+            return
+    raise AssertionError(f"{where}: never reached by Tab")
+
+
+def keyboard_only(r: E.Run) -> None:
+    """Pass: the whole flow, sample to revision to invite, with the keyboard alone."""
+    p = r.page
+    r.step("breakit: keyboard only, from the welcome screen to an applied revision and the invite")
+    p.goto(E.BASE + "/?reset=1")
+    tab_to(p, "e.textContent === \"Aditya's 22nd birthday\"", "sample link")
+    p.keyboard.press("Enter")
+    expect(p.locator("#prop-h")).to_be_visible(timeout=60000)
+    for i in range(6):  # Looks good on every stop
+        tab_to(p, "e.id === 'ok-btn'", f"Looks good on stop {i + 1}")
+        p.keyboard.press("Enter")
+        p.wait_for_timeout(250)
+    tab_to(p, "e.classList.contains('navb') && e.textContent === 'My plan'", "My plan in the header")
+    p.keyboard.press("Enter")
+    tab_to(p, "e.id === 'adj-in'", "Ask to adjust")
+    p.keyboard.type("10 more guests and two weeks earlier")
+    p.keyboard.press("Enter")
+    expect(p.locator("#diff-h")).to_be_focused(timeout=30000)
+    tab_to(p, "e.textContent === 'Apply changes' || e.textContent === 'Apply anyway'", "Apply")
+    p.keyboard.press("Enter")
+    expect(p.locator("#diff-h")).to_have_count(0)
+    assert p.evaluate("import('/js/store.js').then((m) => m.state.plan.profile.guests)") == 40
+    tab_to(p, "e.classList.contains('navb') && e.textContent === 'Invite'", "Invite in the header")
+    p.keyboard.press("Enter")
+    expect(p.locator(".tones .tone").first).to_be_visible(timeout=40000)
+    tab_to(p, "e.classList.contains('tone')", "an invitation tone")
+    p.keyboard.press("Enter")
+    clean_text(p, "invite by keyboard")
+
+
+def network_down(r: E.Run) -> None:
+    """Pass: places and photos down still give a usable plan; the plan or a revision failing says so in
+    words, and the working-on-it overlay never stays up."""
+    p = r.page
+    r.step("breakit: places, photos, the plan and revisions failing")
+    p.route("**/api/places**", lambda route: route.abort())
+    p.route("**/api/photo**", lambda route: route.abort())
+    try:
+        E.open_sample(p)
+        clean_text(p, "journey with places and photos down")
+        p.route("**/api/adjust", lambda route: route.fulfill(status=500, content_type="application/json",
+                                                              body='{"error": "Something went wrong on our side. Please try again."}'))
+        p.click("nav >> text=My plan")
+        p.fill("#adj-in", "50 more guests")
+        p.click("#view button >> text=Show me")
+        expect(p.locator("#adj-msg")).to_contain_text("Please try again")
+        expect(p.locator("#busy")).to_be_hidden()
+        p.unroute("**/api/adjust")
+        p.context.set_offline(True)
+        p.click("#view button >> text=Show me")
+        expect(p.locator("#adj-msg")).to_contain_text("Can't reach Waypoint")
+        expect(p.locator(".offb")).to_contain_text("offline")
+        p.context.set_offline(False)
+        p.route("**/api/plan", lambda route: route.fulfill(status=504, content_type="text/html", body="<html>Gateway Timeout</html>"))
+        p.goto(E.BASE + "/?reset=1")
+        p.click("#view button >> text=Aditya's 22nd birthday")
+        expect(p.locator("#view .err")).to_contain_text("went wrong", timeout=20000)
+        expect(p.locator("#busy")).to_be_hidden()
+        assert "<html>" not in p.locator("body").inner_text()
+    finally:
+        p.context.set_offline(False)
+        p.unroute_all()
+    # the failures above log failed loads in the console; they are the point of this check
+    r.errors = [e for e in r.errors if "Failed to load resource" not in e]
+
+
+def sizes_and_motion(r: E.Run, dark: bool) -> None:
+    """Pass: no sideways scrolling at 390 px, 1440 px and 200% zoom (640 CSS px), with reduced motion;
+    the tour on every screen stays on screen and closes with Esc."""
+    p = r.page
+    r.step("breakit: 390 px, 1440 px and 200% zoom with reduced motion; the tour everywhere" + (" (dark)" if dark else ""))
+    p.emulate_media(reduced_motion="reduce")
+    try:
+        for w, h in ((390, 844), (1440, 900), (640, 450)):
+            p.set_viewport_size({"width": w, "height": h})
+            E.open_sample(p, dark)
+            for route in ("journey", "day", "plan", "invite", "chat", "welcome"):
+                p.evaluate(f"location.hash = '{route}'")
+                p.wait_for_timeout(500)
+                sw = p.evaluate("document.documentElement.scrollWidth")
+                assert sw <= w + 1, f"{route} at {w}px scrolls sideways ({sw}px)"
+                clean_text(p, f"{route} at {w}px")
+            for route in ("journey", "plan", "invite"):
+                p.goto(E.BASE + "/?tour=1#" + route)
+                expect(p.locator("#tour")).to_be_visible(timeout=5000)
+                box = p.locator("#tour").bounding_box()
+                assert box["x"] >= 0 and box["x"] + box["width"] <= w + 1, f"tour off screen on {route} at {w}px"
+                p.keyboard.press("Escape")
+                expect(p.locator("#tour")).to_have_count(0)
+        assert p.evaluate("getComputedStyle(document.querySelector('[data-next]')).animationName") in ("none", ""), \
+            "the primary still pulses under reduced motion"
+    finally:
+        p.emulate_media(reduced_motion="no-preference")
+        p.set_viewport_size({"width": 1280, "height": 900})
+
+
+def intake_says_why(r: E.Run) -> None:
+    """B02: an answer that couldn't be used brought back the same question with no explanation."""
+    p = r.page
+    r.step("breakit: an unreadable intake answer says why the question is back")
+    p.goto(E.BASE + "/?reset=1")
+    p.fill("#w-in", "A birthday in Gachibowli, Hyderabad")
+    p.click("#view button >> text=Begin")
+    expect(p.locator("#q-h")).to_contain_text("how many people", timeout=40000)
+    for answer, why in (("100000", "up to 5,000 guests"), ("zero", "at least 1 guest"), ("lots", "Type a number")):
+        p.fill("#a-in", answer)
+        p.press("#a-in", "Enter")
+        expect(p.locator("#q-h")).to_contain_text(why, timeout=20000)
+    p.fill("#a-in", "thirty")
+    p.press("#a-in", "Enter")
+    expect(p.locator(".evchips")).to_contain_text("30 guests", timeout=20000)
+
+
 def run(r: E.Run, dark: bool) -> None:
     if not dark:  # storage handling does not depend on the theme
         corrupt_storage(r)
         two_tabs(r)
         tradeoff_primary(r)
         quote_then_revise_then_remove(r)
+        keyboard_only(r)
+        network_down(r)
+        intake_says_why(r)
     hostile_text(r, dark)
+    sizes_and_motion(r, dark)

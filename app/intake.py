@@ -459,6 +459,8 @@ async def chat_turn(inp: ChatIn, today: dt.date) -> ChatOut:
     ask = draft.ask if draft.ask in ASK_ORDER and draft.ask not in asked_before and not _filled(merged, draft.ask) else None
     if block:
         ask = inp.asked
+    elif inp.asked in missing_req and inp.message.strip() and not inp.edit:
+        ask = inp.asked  # the answer couldn't be used: ask again, saying why, rather than move on silently
     elif missing_req:
         ask = ask if ask in missing_req else missing_req[0]
     elif draft.done or turns >= MAX_TURNS or not optional_left:
