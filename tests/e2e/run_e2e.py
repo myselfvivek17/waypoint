@@ -1036,6 +1036,8 @@ def v4b_readable(p: Page, where: str) -> None:
         const r = document.createRange(); r.selectNodeContents(b.firstChild);
         return [b.firstChild.textContent, r.getClientRects().length]; })""")
     assert all(n == 1 for _, n in lines), f"{where}: a budget label wraps {lines}"
+    names = p.locator(".task .tt1").all_inner_texts()
+    assert not [n for n in names if re.search(r"\w- \w|\w -\w", n)], f"{where}: untidy hyphens in {names}"
     print(f"  readable ({where}): Before column {worst:.2f}:1, {len(lines)} budget labels on one line")
 
 

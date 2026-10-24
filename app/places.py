@@ -338,12 +338,21 @@ def _photo_from_tags(tags: dict, lat: float, lon: float) -> PhotoHint | None:
     return None
 
 
+def display_name(raw: str) -> str:
+    """An OSM name as people would write it: one space between words, and a hyphen spaced on one side
+    only closed up ("Am- Pm cafe" -> "Am-Pm cafe", "Sri -Sai" -> "Sri-Sai"). A dash spaced on both sides
+    ("Cafe - Bakery") is left as it is. Only the shown name changes; ids and links stay OSM's."""
+    name = " ".join(raw.split())
+    name = re.sub(r"(?<=\w)\s+-(?=\w)|(?<=\w)-\s+(?=\w)", "-", name)
+    return name.strip(" -")
+
+
 def parse_overpass(payload: dict | None, center: Point) -> list[Place]:
     """Overpass JSON -> named, de-duplicated places sorted by distance."""
     out: dict[str, Place] = {}
     for el in (payload or {}).get("elements", []) if isinstance(payload, dict) else []:
         tags = el.get("tags") or {}
-        name = " ".join(str(tags.get("name:en") or tags.get("name") or "").split())
+        name = display_name(str(tags.get("name:en") or tags.get("name") or ""))
         lat = el.get("lat", (el.get("center") or {}).get("lat"))
         lon = el.get("lon", (el.get("center") or {}).get("lon"))
         kind = next((tags[k] for k in ("amenity", "leisure", "tourism", "shop") if tags.get(k) in LABELS), None)

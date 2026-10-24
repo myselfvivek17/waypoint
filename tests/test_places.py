@@ -459,3 +459,15 @@ def test_venue_reason_states_the_real_kind_and_no_stale_amounts(aditya, venue_se
     assert rec.reason.startswith("Restaurant, ") and " km from Gachibowli." in rec.reason
     assert "café" not in rec.reason and "₹" not in rec.reason and "Great for cricket fans." in rec.reason
     assert "₹" not in rec.why
+
+
+@pytest.mark.parametrize("raw,shown", [
+    ("Am- Pm cafe", "Am-Pm cafe"), ("Sri -Sai  Hall", "Sri-Sai Hall"), ("Cafe - Bakery", "Cafe - Bakery"),
+    ("Well-known Hall", "Well-known Hall"), (" - Lone Cafe -", "Lone Cafe"),
+])
+def test_osm_names_are_tidied_for_display_only(raw, shown):
+    """Hyphens spaced on one side are closed up in the name shown; the id stays OSM's, from either source."""
+    rows = places.parse_overpass({"elements": [osm(42, raw, 17.4437, 78.3520, amenity="cafe")]}, GACHIBOWLI)
+    assert [(p.id, p.name) for p in rows] == [("node/42", shown)]
+    nom = places.parse_overpass({"elements": places.nominatim_elements([poi(43, raw, 17.4437, 78.3520)])}, GACHIBOWLI)
+    assert [p.name for p in nom] == [shown]
