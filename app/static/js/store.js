@@ -26,7 +26,7 @@ function initial() {
     demo: {}, serverToday: null, llmMode: null, photos: {}, nearby: {},
     locBusy: false, locMsg: '', areaCheck: null,
     choiceForm: null, choiceNote: '', choiceCost: '', choiceMsg: '', confirmRemove: null, addOpen: false, addDraft: '',
-    dayForm: null, dayDraft: '', dayAlts: null, adjSuggest: null, menu: null, modesFor: null, paidFor: null, paidDraft: '', trade: null,
+    dayForm: null, dayDraft: '', dayAlts: null, adjSuggest: null, menu: null, modesFor: null, paidFor: null, paidDraft: '', trade: null, vendor: null,
   };
 }
 
@@ -145,6 +145,14 @@ export function setStopStatus(key, status, note = '', cost = null) {
 export function setPaid(key, amount) {
   const n = amount === '' || amount == null ? null : Math.max(0, Math.min(500000000, Math.round(Number(amount)) || 0));
   state.plan = Object.assign({}, state.plan, { stops: state.plan.stops.map((s) => (s.key === key ? Object.assign({}, s, { paid: n }) : s)) });
+}
+
+/** A vendor's quote the user chose (null goes back to Waypoint's estimate). Choosing one decides the stop. */
+export function setQuote(key, quote) {
+  state.plan = Object.assign({}, state.plan, { stops: state.plan.stops.map((s) => (s.key === key ? Object.assign({}, s, { quote }) : s)) });
+  const j = state.j;
+  if (quote) state.j = Object.assign({}, j, { decided: Object.assign({}, j.decided, { [key]: true }) });
+  untick([key]);
 }
 
 /** A moment on the event day: keep, skip, already sorted, or the user's own words. */

@@ -6,7 +6,7 @@ import { h, inr, s, safeUrl } from './dom.js';
 import { chipDefs } from './intake.js';
 import { openTrade } from './dayplan.js';
 import { allOptions, budgetLine, lineTotal, maxReach, nextIndex, priceSays, priceText, stopsModel, summary } from './model.js';
-import { applyAdjustment, chooseOption, confirmStop, planBody, setStopStatus, state } from './store.js';
+import { applyAdjustment, chooseOption, confirmStop, planBody, setQuote, setStopStatus, state } from './store.js';
 import { moreMenu } from './menu.js';
 import { tourOpen } from './tour.js';
 import { announce, empty, go, guide, later, priceTag, priceWithTag, primary, rerender, say, stopThinking, think, update } from './ui.js';
@@ -332,6 +332,124 @@ function choiceForm(m, cur) {
       h('button', { class: 'btn', type: 'button', onClick: () => update({ choiceForm: null, choiceMsg: '' }, { focus: 'more-stop' }) }, 'Cancel')));
 }
 
+// ------------------------------------------------------------------ vendors
+
+const VENDOR_STOPS = new Set(['venue', 'food', 'cake', 'theme', 'decor_lights', 'photographer', 'puja', 'poojari', 'music', 'dj',
+  'sound', 'mehendi', 'makeup', 'anchor', 'transport']);
+const NOT_CONTACTED = "Waypoint hasn't contacted anyone. Availability and prices are yours to confirm.";
+const blankQuote = () => ({ vendor: '', price: '', text: '' });
+
+function setV(patch, focus = null) {
+  update({ vendor: Object.assign({}, state.vendor, patch) }, { focus });
+}
+
+function openVendor(cur, tab = 'ask') {
+  update({ vendor: { key: cur.key, tab, q: null, busy: false, err: '', quotes: [blankQuote(), blankQuote()], res: null },
+    choiceForm: null, change: false }, { focus: 'vd-h' });
+  if (tab === 'ask') loadQuestions();
+}
+
+async function loadQuestions() {
+  setV({ busy: true, err: '' });
+  const r = await api.vendorQuestions({ plan: state.plan, stop: state.vendor.key, chosen: state.j.chosen });
+  if (!state.vendor) return;
+  setV({ busy: false, q: r.ok ? r.data : null, err: r.ok ? '' : errorText(r) });
+  if (r.ok) announce(`${r.data.questions.length} questions to ask.`);
+}
+
+async function copyQuestions() {
+  const q = state.vendor.q;
+  const text = `${q.label}: questions to ask\n` + q.questions.map((x, i) => `${i + 1}. ${x}`).join('\n');
+  try { await navigator.clipboard.writeText(text); say('Questions copied.'); } catch (e) { say('Copy is blocked here. Select the list instead.'); }
+}
+
+async function compareQuotes() {
+  const v = state.vendor;
+  const quotes = v.quotes.map((q) => ({ vendor: q.vendor.trim(), price: q.price === '' ? null : Math.max(0, Math.round(Number(q.price)) || 0),
+    text: q.text.trim().slice(0, 1500) })).filter((q) => q.vendor && (q.text || q.price != null));
+  if (!quotes.length) { setV({ err: 'Add at least one quote: a vendor name and their price or message.' }, 'vq-0-n'); return; }
+  setV({ busy: true, err: '' });
+  think(`Reading ${quotes.length} quote${quotes.length > 1 ? 's' : ''} and checking the sums…`);
+  const r = await api.vendorQuotes(planBody({ stop: v.key, quotes }));
+  stopThinking();
+  if (!state.vendor) return;
+  setV({ busy: false, res: r.ok ? r.data : null, err: r.ok ? '' : errorText(r) }, r.ok ? 'vr-h' : null);
+  if (r.ok) announce(`Compared ${r.data.rows.length} quotes.`);
+}
+
+function chooseQuote(cur, row) {
+  setQuote(cur.key, { vendor: row.vendor, price: row.total, includes: row.includes.slice(0, 10), clarify: row.clarify.slice(0, 10) });
+  update({ vendor: null }, { focus: 'stop' });
+  say(`${row.vendor}'s quote, ${inr(row.total)}, is now in your budget as Quoted.`);
+}
+
+const signed = (n) => (n === 0 ? 'same as' : n > 0 ? `${inr(n)} more than` : `${inr(-n)} less than`);
+
+function quoteForm(v) {
+  return h('form', { class: 'vquotes', onSubmit: (e) => { e.preventDefault(); compareQuotes(); } },
+    v.quotes.map((q, i) => h('fieldset', { class: 'vq' },
+      h('legend', null, `Quote ${i + 1}`),
+      h('label', { class: 'flab', for: `vq-${i}-n` }, 'Vendor'),
+      h('input', { id: `vq-${i}-n`, class: 'cin', type: 'text', maxlength: 80, autocomplete: 'off', value: q.vendor,
+        placeholder: 'e.g. Annapurna Caterers', onInput: (e) => { q.vendor = e.target.value; } }),
+      h('label', { class: 'flab', for: `vq-${i}-p` }, 'Price in rupees (optional if it is in their message)'),
+      h('input', { id: `vq-${i}-p`, class: 'cin', type: 'number', min: 0, max: 500000000, step: 1, inputmode: 'numeric', value: q.price,
+        onInput: (e) => { q.price = e.target.value; } }),
+      h('label', { class: 'flab', for: `vq-${i}-t` }, 'What they quoted: paste their message'),
+      h('textarea', { id: `vq-${i}-t`, class: 'cin vta', maxlength: 1500, rows: 3, value: q.text,
+        placeholder: 'e.g. ₹420 per plate for 30 guests, includes serving staff. GST extra.', onInput: (e) => { q.text = e.target.value; } }, q.text))),
+    h('div', { class: 'pact' },
+      v.quotes.length < 3 ? h('button', { class: 'btn', type: 'button', onClick: () => setV({ quotes: v.quotes.concat(blankQuote()) }, `vq-${v.quotes.length}-n`) },
+        '+ Add a third quote') : null,
+      h('button', { class: 'btn pri', id: 'vq-go', type: 'submit', disabled: v.busy }, 'Compare these quotes')));
+}
+
+function quoteTable(cur, res) {
+  const best = res.rows.filter((r) => r.total != null).reduce((a, r) => (a && a.total <= r.total ? a : r), null);
+  return h('div', { class: 'vres', role: 'region', 'aria-labelledby': 'vr-h', tabindex: '-1' },
+    h('h4', { class: 'flab', id: 'vr-h', tabindex: '-1' }, `${res.rows.length} quote${res.rows.length > 1 ? 's' : ''} for the ${res.label.toLowerCase()}, checked by code `,
+      h('span', { class: 'aitag' + (res.source === 'ai' ? ' ai' : '') }, res.source === 'ai' ? 'Read by AI · sums by code' : 'Read and summed by code')),
+    h('div', { class: 'vscroll' }, h('table', { class: 'diff vtable' },
+      h('caption', { class: 'sr' }, 'Quotes compared'),
+      h('thead', null, h('tr', null, ['Vendor', 'Total', 'Per guest', 'Against the estimate', 'Includes', 'Still to clarify'].map((t) => h('th', { scope: 'col' }, t)))),
+      h('tbody', null, res.rows.map((r) => h('tr', null,
+        h('th', { scope: 'row' }, r.vendor, r === best && res.rows.length > 1 ? h('span', { class: 'ptag' }, ' Lowest') : null),
+        h('td', null, r.total == null ? '—' : [inr(r.total), ' ', priceTag('quoted')],
+          r.extras.length ? h('span', { class: 'tt2 vsub' }, 'with ' + r.extras.map((e) => `${e.item} ${inr(e.price)}`).join(', ')) : null),
+        h('td', null, r.per_guest == null ? '—' : inr(r.per_guest)),
+        h('td', null, r.vs_estimate == null ? '—' : `${signed(r.vs_estimate)} ≈ ${inr(res.estimate)}`,
+          r.vs_budget != null ? h('span', { class: 'tt2 vsub' + (r.vs_budget > 0 ? ' over' : '') },
+            r.vs_budget > 0 ? `Plan ${inr(r.vs_budget)} over budget` : `Plan ${inr(-r.vs_budget)} under budget`) : null),
+        h('td', null, r.includes.length ? r.includes.join(', ') : '—'),
+        h('td', null, [...r.flags, ...r.missing.map((m) => 'Missing: ' + m), ...r.clarify].length
+          ? h('ul', { class: 'vlist' }, [...r.flags, ...r.missing.map((m) => 'Missing: ' + m), ...r.clarify].map((x) => h('li', null, x))) : 'Nothing obvious')))))),
+    h('ul', { class: 'vchoose' }, res.rows.filter((r) => r.total != null).map((r) => h('li', null,
+      h('button', { class: 'btn', type: 'button', onClick: () => chooseQuote(cur, r) }, `Choose ${r.vendor}'s quote`,
+        h('span', { class: 'sr' }, `, ${inr(r.total)}`))))));
+}
+
+function vendorPanel(cur) {
+  const v = state.vendor;
+  if (!v || v.key !== cur.key) return null;
+  const tab = (id, label) => h('button', { class: 'tab', type: 'button', 'aria-pressed': String(v.tab === id), id: 'vt-' + id,
+    onClick: () => { setV({ tab: id }, 'vt-' + id); if (id === 'ask' && !state.vendor.q) loadQuestions(); } }, label);
+  return h('section', { class: 'chg vendor', 'aria-labelledby': 'vd-h' },
+    h('div', { class: 'chghd' },
+      h('h3', { class: 'flab', id: 'vd-h', tabindex: '-1', style: { fontSize: '18px', margin: '0' } }, `Talk to vendors: ${cur.label.toLowerCase()}`),
+      h('button', { class: 'linkb', type: 'button', onClick: () => update({ vendor: null }, { focus: 'more-stop' }) }, 'Close')),
+    h('p', { class: 'vnote' }, NOT_CONTACTED),
+    h('div', { class: 'tabs', role: 'group', 'aria-label': 'Vendor help' }, tab('ask', 'What to ask'), tab('quotes', 'Compare quotes')),
+    v.err ? h('p', { class: 'err', role: 'alert' }, v.err) : null,
+    v.tab === 'ask' ? (v.busy ? h('p', { class: 'chgmsg', role: 'status' }, 'Writing the questions…') : v.q ? h('div', null,
+      h('p', { class: 'tt2' }, 'Ask every vendor these, then paste their answers under Compare quotes. ',
+        h('span', { class: 'aitag' + (v.q.source === 'ai' ? ' ai' : '') }, v.q.source === 'ai' ? 'Written by AI · must-haves checked by code' : 'Checklist from the rules')),
+      h('ol', { class: 'vqs' }, v.q.questions.map((x) => h('li', null, x))),
+      v.q.must.length ? h('p', { class: 'tt2' }, 'Must-haves from your details: ' + v.q.must.join('; ') + '.') : null,
+      h('div', { class: 'pact' }, h('button', { class: 'btn', type: 'button', onClick: copyQuestions }, 'Copy the questions'),
+        h('button', { class: 'btn', type: 'button', onClick: () => setV({ tab: 'quotes' }, 'vq-0-n') }, 'I have quotes: compare them'))) : null)
+      : [quoteForm(v), v.res ? quoteTable(cur, v.res) : null]);
+}
+
 /** Everything else you can do with a stop, one tap away in "More ▾". */
 function stopMenu(m, cur) {
   const label = cur.label.toLowerCase();
@@ -341,6 +459,9 @@ function stopMenu(m, cur) {
     { id: 'ch-have', label: 'I already have this', onSelect: () => form('have') },
     { id: 'ch-own', label: 'Write my own', onSelect: () => form('own') },
     { id: 'ch-change', label: 'Describe a change', onSelect: () => update({ change: true, changeMsg: '', choiceForm: null }, { focus: 'c-in' }) },
+    VENDOR_STOPS.has(cur.key) ? { id: 'ch-vendor', label: 'Talk to vendors', onSelect: () => openVendor(cur) } : null,
+    cur.s.quote ? { id: 'ch-unquote', label: 'Use the estimate again', onSelect: () => {
+      setQuote(cur.key, null); update({}, { focus: 'stop' }); say('Back to the estimate.'); } } : null,
     { id: 'rm-btn', label: 'Remove stop', danger: true, onSelect: () => update({ confirmRemove: cur.key, choiceForm: null }, { focus: 'rm-yes' }) },
   ], { describe: `ways to handle the ${label}` });
 }
@@ -869,6 +990,6 @@ export function journeyView(opts) {
       h('h2', { id: 'fin-h', class: 'disp h2', tabindex: '-1' }, 'No stops yet'),
       empty('Nothing is on your route. Add a stop, like the venue or a photographer, and I will suggest one.'),
       primary({ onClick: () => update({ addOpen: true }, { focus: 'add-in' }) }, 'Add a stop'))
-      : idx >= n ? finale() : proposal(m, idx),
+      : idx >= n ? finale() : [proposal(m, idx), m[idx].status === 'open' ? vendorPanel(m[idx]) : null],
     plan.notes && plan.notes.length ? h('ul', { class: 'notes', 'aria-label': 'Notes about this plan' }, plan.notes.map((t) => h('li', null, t))) : null);
 }

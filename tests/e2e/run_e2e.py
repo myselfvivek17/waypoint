@@ -923,7 +923,7 @@ def area_picker(r: Run, dark: bool) -> None:
 
 def open_sample(p: Page, dark: bool = False) -> None:
     p.goto(BASE + "/?reset=1")
-    if dark:
+    if (p.evaluate("document.documentElement.dataset.theme") == "dark") != dark:
         p.click("#theme")
     p.click("#view button >> text=Aditya's 22nd birthday")
     expect(p.locator("#prop-h")).to_be_visible(timeout=160000)
@@ -1067,6 +1067,56 @@ def v4_tradeoffs(r: Run, dark: bool) -> None:
     assert_no_null_text(p)
 
 
+QUOTE_A = ("Annapurna Caterers", "", "Veg buffet ₹420 per plate for 30 guests, includes 2 starters, dal, paneer, rice, roti, "
+           "dessert and serving staff. GST 5% extra. Live dosa counter extra ₹3,000.")
+QUOTE_B = ("Home Chef Meera", "9000", "Thali for 25 people, delivered. Jain thali available. 50% advance.")
+
+
+def v4_vendors(r: Run, dark: bool) -> None:
+    """Item 4: what to ask a caterer, compare two pasted quotes, choose one -> "Quoted" in the budget."""
+    p = r.page
+    suffix = "-dark" if dark else ""
+    r.step("vendors: questions to ask, compare quotes, the chosen quote becomes the budget line" + (" (dark)" if dark else ""))
+    open_sample(p, dark)
+    p.click("#ok-btn")
+    p.click("#ok-btn")
+    expect(p.locator("#prop-h")).to_be_visible()
+    expect(p.locator(".step").filter(has_text="Food")).to_have_count(1)
+    more(p, "#ch-vendor")
+    expect(p.locator("#vd-h")).to_be_focused()
+    expect(p.locator(".vnote")).to_have_text("Waypoint hasn't contacted anyone. Availability and prices are yours to confirm.")
+    expect(p.locator(".vqs li").first).to_be_visible(timeout=30000)
+    n = p.locator(".vqs li").count()
+    assert 5 <= n <= 8, n
+    expect(p.locator(".vqs")).to_contain_text("Jain")
+    p.locator(".vendor").scroll_into_view_if_needed()
+    r.shot("v4-vendor-questions" + suffix, full=False)
+    p.click("#view button >> text=Copy the questions")
+    expect(p.locator("#toast")).to_contain_text("copied")
+    p.click("#view button >> text=I have quotes: compare them")
+    for i, (name, price, text) in enumerate((QUOTE_A, QUOTE_B)):
+        p.fill(f"#vq-{i}-n", name)
+        if price:
+            p.fill(f"#vq-{i}-p", price)
+        p.fill(f"#vq-{i}-t", text)
+    p.click("#vq-go")
+    expect(p.locator(".vtable tbody tr")).to_have_count(2, timeout=40000)
+    expect(p.locator(".vtable")).to_contain_text("₹15,600")
+    expect(p.locator(".vtable")).to_contain_text("Covers 25 guests; you have 30.")
+    expect(p.locator(".vtable")).to_contain_text("Advance and cancellation terms")
+    p.locator(".vres").scroll_into_view_if_needed()
+    r.shot("v4-vendor-quotes" + suffix, full=False)
+    p.click("#view button >> text=Choose Annapurna Caterers's quote")
+    expect(p.locator(".vendor")).to_have_count(0)
+    p.click("button.sg >> text=List")
+    p.locator(".slist button", has_text="Food").click()
+    expect(p.locator(".pprice")).to_contain_text("₹15,600")
+    expect(p.locator(".pprice .ptag.price.quoted")).to_contain_text("Quoted")
+    expect(p.locator(".budtop [data-budget-line]")).to_contain_text("₹15,600 quoted or yours")
+    check_totals_match(r, "after choosing a quote")
+    assert_no_null_text(p)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--live", action="store_true", help="use the real model from .env")
@@ -1101,6 +1151,7 @@ def main() -> int:
                         v4_prices(r, dark)
                         v4_revision(r, dark)
                         v4_tradeoffs(r, dark)
+                        v4_vendors(r, dark)
                     if only in ("", "picker"):
                         area_picker(r, dark)
                     if only in ("", "guided"):

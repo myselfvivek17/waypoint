@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parent
 if os.getenv("WP_NO_DOTENV") != "1":
     load_dotenv(ROOT.parent / ".env")
 
-from . import choices, intake, invites, llm, places, planner, tradeoffs  # noqa: E402  (env must be loaded first)
+from . import choices, intake, invites, llm, places, planner, tradeoffs, vendors  # noqa: E402  (env must be loaded first)
 from .schemas import PhotoHint, Plan, Profile, Strict  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -210,6 +210,26 @@ async def trade(body: tradeoffs.TradeIn, request: Request) -> tradeoffs.TradeOut
     """Over budget: two or three rebalanced options for the user's priorities (maths in code)."""
     limiter.check(request, "adjust")
     return await tradeoffs.tradeoffs(body, planner.today())
+
+
+@app.post("/api/vendor/questions", response_model=vendors.QuestionsOut)
+async def vendor_questions(body: vendors.QuestionsIn, request: Request) -> vendors.QuestionsOut:
+    """"What to ask": 5–8 questions for this stop's vendor. Waypoint never contacts anyone."""
+    limiter.check(request, "adjust")
+    try:
+        return await vendors.questions(body)
+    except ValueError:
+        raise HTTPException(422, "That stop doesn't involve a vendor.") from None
+
+
+@app.post("/api/vendor/quotes", response_model=vendors.QuotesOut)
+async def vendor_quotes(body: vendors.QuotesIn, request: Request) -> vendors.QuotesOut:
+    """"Compare quotes": what each pasted quote includes and costs, checked against the text, in code."""
+    limiter.check(request, "adjust")
+    try:
+        return await vendors.compare(body)
+    except ValueError:
+        raise HTTPException(422, "That stop doesn't involve a vendor.") from None
 
 
 @app.post("/api/invite", response_model=invites.InviteOut)
