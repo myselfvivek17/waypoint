@@ -1032,6 +1032,8 @@ def v4_revision(r: Run, dark: bool) -> None:
     assert rows["Guests"] == ["30", "80"] and rows["Budget"] == ["₹40,000", "₹36,000"], rows
     assert rows["Date"][1] == "1 Nov" and rows["Per guest"] == ["₹1,333", "₹450"] and "Days to go" in rows, rows
     assert any(k.startswith("Now urgent") for k in rows), rows
+    assert "Now urgent" not in rows and all(v[0].strip() not in ("", "—") or k == "On the day" for k, v in rows.items()), rows
+    expect(p.locator("#diff-more")).to_contain_text(re.compile(r"^\d+ more tasks are now urgent"))
     expect(p.locator(".explain")).to_contain_text("so I took 10%")
     expect(p.locator(".explain")).to_contain_text("You decided on")
     expect(p.locator(".ways-out .way")).to_have_count(3)

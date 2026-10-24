@@ -154,6 +154,7 @@ class AdjustOut(BaseModel):
     block_title: str = ""           # the new numbers are impossible: "let's make this work"
     block_body: str = ""
     ways: list[WayOut] = []
+    more_urgent: int = 0            # newly urgent tasks beyond the rows shown: a note under the table
 
 
 # ------------------------------------------------------------------ pricing (mirrors the browser's model.js)
@@ -850,8 +851,10 @@ def _due_text(t: Task, now: dt.date) -> str:
     return f"by {t.due.day} {t.due:%b}" + (" (today)" if n == 0 else f" (in {n} day{'s' if n != 1 else ''})")
 
 
-def timing_rows(before_plan: Plan, after_plan: Plan, p: Profile, new_p: Profile, booked: set[str] = frozenset()) -> list[DiffRow]:
-    """Per-guest figure, days to go, book-by dates that moved, and tasks that are newly urgent."""
+def timing_rows(before_plan: Plan, after_plan: Plan, p: Profile, new_p: Profile,
+                booked: set[str] = frozenset()) -> tuple[list[DiffRow], int]:
+    """Per-guest figure, days to go, book-by dates that moved, and tasks that are newly urgent; plus how
+    many more newly urgent tasks there are than rows shown (said in a note, not as a half-empty row)."""
     rows: list[DiffRow] = []
     now = after_plan.today
     if (p.guests, p.budget) != (new_p.guests, new_p.budget) and p.guests and new_p.guests:
@@ -876,15 +879,13 @@ def timing_rows(before_plan: Plan, after_plan: Plan, p: Profile, new_p: Profile,
         if was is None or not _urgent(was, now):
             urgent.append(DiffRow(label=f"Now urgent: {clip(t.text, 60)}", before=_due_text(was, now) if was else "—",
                                   after=_due_text(t, now)))
-    if len(urgent) > MAX_URGENT_ROWS + 1:
-        more = len(urgent) - MAX_URGENT_ROWS
-        urgent = urgent[:MAX_URGENT_ROWS] + [DiffRow(label="Now urgent", before="—",
-                                                     after=f"{more} more tasks: see My plan")]
-    return rows + urgent
+    more = len(urgent) - MAX_URGENT_ROWS if len(urgent) > MAX_URGENT_ROWS + 1 else 0
+    return rows + urgent[:len(urgent) - more], more
 
 
 def diff(before_plan: Plan, after_plan: Plan, before: list, after: list, p: Profile, new_p: Profile,
-         booked: set[str] = frozenset()) -> tuple[list[DiffRow], int]:
+         booked: set[str] = frozenset()) -> tuple[list[DiffRow], int, int]:
+    """The rows, the rupees freed, and how many newly urgent tasks are not shown as rows."""
     rows: list[DiffRow] = []
     if new_p.guests != p.guests:
         rows.append(DiffRow(label="Guests", before=str(p.guests), after=str(new_p.guests)))
@@ -907,7 +908,8 @@ def diff(before_plan: Plan, after_plan: Plan, before: list, after: list, p: Prof
             rows.append(DiffRow(label=a[0].label, before=_describe(*b), after=_describe(*a)))
             if a[0].status == "skip" and b[0].status != "skip":
                 freed += b[2]
-    rows += timing_rows(before_plan, after_plan, p, new_p, booked)
+    timing, more_urgent = timing_rows(before_plan, after_plan, p, new_p, booked)
+    rows += timing
     b_items = {it.id: it for _, it in _items(before_plan)}
     a_items = {it.id: it for _, it in _items(after_plan)}
     for iid, it in b_items.items():
@@ -922,7 +924,7 @@ def diff(before_plan: Plan, after_plan: Plan, before: list, after: list, p: Prof
     for iid, it in a_items.items():
         if iid not in b_items:
             rows.append(DiffRow(label="On the day", before="—", after=f"{it.time} {it.title}"))
-    return rows, freed
+    return rows, freed, more_urgent
 
 
 PLAN_FIELDS = {"cut_budget", "set_budget", "add_guests", "remove_guests", "set_guests", "move_date"}
@@ -973,7 +975,7 @@ async def run_ops(plan: Plan, chosen: dict[str, str], ripples: list[RippleState]
     new_p = p.model_copy(update={"guests": c.guests, "budget": c.budget, "date": c.date})
     new_plan = replan(c.plan, new_p, now, c.chosen)
     after = priced(new_plan, c.guests, c.chosen, c.ripples)
-    rows, freed = diff(replan(plan, p, now, chosen), new_plan, before, after, p, new_p, set(booked))
+    rows, freed, more_urgent = diff(replan(plan, p, now, chosen), new_plan, before, after, p, new_p, set(booked))
     tb, ta = sum(x[2] for x in before), sum(x[2] for x in after)
     estimated = any(prices.source(x[0]) == "estimate" for x in after)
     rows.append(DiffRow(label="Total (includes estimates)" if estimated else "Total", before=inr(tb), after=inr(ta)))
@@ -993,7 +995,8 @@ async def run_ops(plan: Plan, chosen: dict[str, str], ripples: list[RippleState]
     return AdjustOut(understood=bool(c.titles), title=clip(title[0].upper() + title[1:], 160), rows=rows if c.titles else [],
                      note=note.strip(), profile=new_p, chosen=c.chosen, ripples=c.ripples, plan=new_plan,
                      source=source, ops=ops, freed=freed, explain=explain, over=max(0, gap) if not block_title else 0,
-                     block_title=block_title, block_body=block_body, ways=ways)
+                     block_title=block_title, block_body=block_body, ways=ways,
+                     more_urgent=more_urgent if c.titles else 0)
 
 
 # ------------------------------------------------------------------ the two entry points

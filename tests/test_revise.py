@@ -218,3 +218,13 @@ def test_tasks_and_urgent_rows_name_the_revised_picks(plan):
     assert urgent
     for k in swapped:
         assert not any(stops[k]["rec"]["name"][:30] in label for label in urgent), (k, urgent)
+
+
+def test_more_urgent_tasks_are_a_note_not_a_half_empty_row(plan):
+    """Beyond the first four, newly urgent tasks are counted in ``more_urgent``; no row has an empty Before."""
+    out = adjust(plan, "actually we have 50 more guests, our budget decreased a bit, and the event is two weeks earlier")
+    urgent = [r for r in out["rows"] if r["label"].startswith("Now urgent")]
+    assert len(urgent) == choices.MAX_URGENT_ROWS and out["more_urgent"] >= 2, (urgent, out["more_urgent"])
+    assert all(r["label"] != "Now urgent" and "more tasks" not in r["after"] for r in urgent)
+    small = adjust(plan, "+5 people")
+    assert small["more_urgent"] == 0

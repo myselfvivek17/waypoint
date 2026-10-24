@@ -323,6 +323,8 @@ function diffView(d) {
       h('caption', { class: 'sr' }, d.title + ': before and after'),
       h('thead', null, h('tr', null, h('th', { scope: 'col' }, 'What'), h('th', { scope: 'col' }, 'Before'), h('th', { scope: 'col' }, 'After'))),
       h('tbody', null, d.rows.map((r) => h('tr', null, h('td', null, r.label), h('td', null, r.before), h('td', null, h('b', null, r.after)))))),
+    d.more_urgent ? h('p', { class: 'chgmsg', id: 'diff-more' },
+      `${d.more_urgent} more task${d.more_urgent === 1 ? ' is' : 's are'} now urgent: see All tasks after you apply.`) : null,
     h('p', { class: 'chgmsg' }, d.note,
       d.source === 'rules' ? null : d.source !== 'ai' ? h('span', { class: 'tt2' }, ' (Understood by the rules parser, not the AI.)') : null),
     d.explain && d.explain.length ? h('div', { class: 'explain' }, h('p', { class: 'flab' }, 'What I kept, changed and assumed'),
